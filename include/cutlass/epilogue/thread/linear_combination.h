@@ -184,6 +184,8 @@ public:
     if (Scale == ScaleType::Nothing)
       return destination_converter(converted_accumulator);
 
+    // if(threadIdx.x + threadIdx.y == 0 && blockIdx.x + blockIdx.y + blockIdx.z == 0)
+    // printf("epilogue\n");
     // Perform binary operations
     FragmentCompute intermediate;
 

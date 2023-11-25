@@ -503,7 +503,9 @@ public:
     // Unroll the warp-level MMA tiles of a threadblock's mainloop iteration
     CUTLASS_PRAGMA_UNROLL
     for (int warp_mma_k = 0; warp_mma_k < Base::kWarpGemmIterations; ++warp_mma_k) {
-
+      
+      // if(threadIdx.x + threadIdx.y == 0 && blockIdx.x + blockIdx.y + blockIdx.z == 0)
+      // printf("warp_mma_k=%d, kWarpGemmIterations=%d\n", warp_mma_k, Base::kWarpGemmIterations);
       // Load the next warp-tile's A fragment from shared memory
       this->warp_tile_iterator_A_.set_kgroup_index((warp_mma_k + 1) % Base::kWarpGemmIterations);
       this->warp_tile_iterator_A_.load(pipe_state.warp_loaded_frag_A_[(warp_mma_k + 1) % 2]);
@@ -524,6 +526,8 @@ public:
       }
 
       // Execute the current warp-tile of MMA operations
+      // if(threadIdx.x + threadIdx.y == 0 && blockIdx.x + blockIdx.y + blockIdx.z == 0)
+      // printf("kStagedAccumulation=%d\n", Detail::kStagedAccumulation);
       if (Detail::kStagedAccumulation) {
         warp_mma_(
           pipe_state.tmp_accum_,
@@ -538,6 +542,7 @@ public:
           pipe_state.tmp_accum_.clear();
         }
       } else {
+        
         warp_mma_(
           accum,
           pipe_state.warp_transformed_frag_A_[warp_mma_k % 2],

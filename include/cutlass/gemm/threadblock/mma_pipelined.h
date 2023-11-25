@@ -326,6 +326,8 @@ public:
       CUTLASS_PRAGMA_UNROLL
       for (int warp_mma_k = 0; warp_mma_k < Base::kWarpGemmIterations; ++warp_mma_k) {
 
+        // if(threadIdx.x + threadIdx.y == 0 && blockIdx.x + blockIdx.y + blockIdx.z == 0)
+        // printf("warp_mma_k=%d, kWarpGemmIterations=%d\n", warp_mma_k, Base::kWarpGemmIterations);
         // Load warp-level tiles from shared memory, wrapping to k offset if this is the last group
         // as the case may be.
 
