@@ -472,6 +472,10 @@ bool verify(const Options &options) {
   return passed;
 }
 
+void custom_host_gemm(const Options &options) {
+  
+}
+
 /// Execute a given example GEMM computation
 template <typename Gemm>
 int run(Options &options)

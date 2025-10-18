@@ -58,6 +58,11 @@ cutlass_example_add_executable(
 )  
 
 cutlass_example_add_executable(
+  79b_shixun
+  79b_shixun.cu
+)  
+
+cutlass_example_add_executable(
   79c_blackwell_geforce_mixed_mxfp8_mxfp6_bf16_gemm
   79c_blackwell_geforce_mixed_mxfp8_mxfp6_bf16_gemm.cu
 )  

@@ -495,7 +495,7 @@ void Gett(
 
   static int constexpr kBlockM = 64;
   static int constexpr kBlockN = 64;
-
+  printf("cute::size<2>(mainloop_params.A.layout()): %zu\n", cute::size<2>(mainloop_params.A.layout()));
 #if defined(_OPENMP)
   #pragma omp parallel for collapse(3)
 #endif
@@ -546,6 +546,7 @@ void gett_mainloop(
   }
 
   // Compute on this k-block
+  printf("cute::size<1>(mainloop_params.A.layout()): %zu\n", cute::size<1>(mainloop_params.A.layout()));
   for (int64_t k = 0; k < cute::size<1>(mainloop_params.A.layout()); ++k) {
     // Load A
     ElementAccumulator a_frag[kBlockM];
@@ -553,6 +554,7 @@ void gett_mainloop(
       if (m + m_b < cute::size<0>(mainloop_params.A.layout())) {
         // Perform reference GEMM calculations at the accumulator's precision. Cast A value to accumulator type.
         a_frag[m_b] = static_cast<ElementAccumulator>(ElementA(mainloop_params.A(m + m_b, k, l)));
+        // a_frag[m_b] = static_cast<ElementAccumulator>(mainloop_params.A(m + m_b, k, l));
         
         
         if constexpr (not cute::is_same_v<ElementSFA, ElementA>){
