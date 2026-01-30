@@ -150,7 +150,7 @@ def run_rcgrouped_example(problem_file: str,
     The example binary reads problem sizes from --benchmark and prints TFLOPS.
     We parse stdout, extract the TFLOPS line, and convert to GFLOPs.
     """
-    exe = "./build/examples/92_blackwell_moe_gemm/92_blackwell_moe_gemm_rcgrouped"
+    exe = "./build/examples/92_blackwell_moe_gemm/92_blackwell_moe_gemm_rcgrouped_bf16"
 
     cmd = [
         exe,
@@ -374,10 +374,14 @@ def main():
 
     # Configs: rcgrouped FP8, blockscaled FP4
     DTYPE_CONFIGS = {
-        "rcgrouped_fp8": {
-            "short_name": "RCGrouped-FP8",
+        "rcgrouped_bf16": {
+            "short_name": "RCGrouped-bf16",
             "runner": "rcgrouped",
         },
+        # "rcgrouped_fp8": {
+        #     "short_name": "RCGrouped-FP8",
+        #     "runner": "rcgrouped",
+        # },
         # "blockscaled_fp4": {
         #     "short_name": "Blockscaled-FP4",
         #     "runner": "blockscaled",

@@ -64,6 +64,13 @@ cutlass_example_add_executable(
 )
 
 cutlass_example_add_executable(
+  92_blackwell_moe_gemm_rcgrouped_bf16
+  92_blackwell_moe_gemm_rcgrouped_bf16.cu
+  TEST_COMMAND_OPTIONS
+  TEST_FIXED
+)
+
+cutlass_example_add_executable(
   92_blackwell_moe_gemm_blockscaled_rcgrouped
   92_blackwell_moe_gemm_blockscaled_rcgrouped.cu
   TEST_COMMAND_OPTIONS
