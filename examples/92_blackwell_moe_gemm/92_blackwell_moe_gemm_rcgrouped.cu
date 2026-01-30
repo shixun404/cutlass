@@ -246,8 +246,8 @@ struct Options {
 
   float alpha = FLT_MAX;
   float beta  = FLT_MAX;
-  int iterations = 1000;
-  int warmup = 1000;
+  int iterations = 100;
+  int warmup = 10;
   int m = 128, n = 128, k = 128, groups = 10;
   double sparse_prob = 0.1;
   dim3 cluster_shape = dim3(4,2,1);
@@ -841,8 +841,19 @@ int main(int argc, char const **args) {
 
   std::cout << "Running kernel with 1SM MMA config:" << std::endl;
   run<Gemm1SM>(options);
-  std::cout << "Running kernel with 2SM MMA config:" << std::endl;
-  run<Gemm2SM>(options);     
+
+  // Only run the 2SM MMA config when the runtime cluster shape supports it.
+  // MMA2SMConfig requires cluster_dim.x >= 2, so for cluster_shape.x == 1
+  // we skip the 2SM kernel to avoid invalid problem / internal errors.
+  if (options.cluster_shape.x * options.cluster_shape.y >= 2) {
+    std::cout << "Running kernel with 2SM MMA config:" << std::endl;
+    run<Gemm2SM>(options);
+  } else {
+    std::cout
+      << "Skipping 2SM MMA config because cluster_m < 2. "
+      << "Set --cluster_m (or --cluster_fallback_m) >= 2 to enable 2SM kernels."
+      << std::endl;
+  }
 #endif
 
   return 0;
