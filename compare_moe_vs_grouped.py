@@ -81,17 +81,12 @@ def compare_performance(moe_csv_path, grouped_csv_path, output_csv=None):
         grouped_best = grouped_rows.loc[grouped_rows['GFLOPs'].idxmax()]
         
         # Create comparison entry
-        match_entry = {
-            'cta_m': moe_best['cta_m'],
-            'cta_n': moe_best['cta_n'],
-            'cta_k': moe_best['cta_k'],
-            'cluster_m': moe_best['cluster_m'],
-            'cluster_n': moe_best['cluster_n'],
-            'stages': moe_best['stages'],
-            'inst_m': moe_best['inst_m'],
-            'inst_n': moe_best['inst_n'],
-            'inst_k': moe_best['inst_k'],
-        }
+        match_entry = {}
+        
+        # Add key parameters
+        for col in key_columns:
+            if col in moe_best:
+                match_entry[col] = moe_best[col]
         
         # Add performance metrics
         for col in perf_columns:
@@ -99,9 +94,22 @@ def compare_performance(moe_csv_path, grouped_csv_path, output_csv=None):
             match_entry[f'grouped_{col}'] = grouped_best[col]
         
         # Calculate speedup/ratio
-        match_entry['Runtime_speedup'] = moe_best['Runtime'] / grouped_best['Runtime']
-        match_entry['GBs_ratio'] = grouped_best['GB/s'] / moe_best['GB/s']
-        match_entry['GFLOPs_ratio'] = grouped_best['GFLOPs'] / moe_best['GFLOPs']
+        # Runtime_speedup: moe/grouped (>1 means moe is slower)
+        # GFLOPs_ratio: grouped/moe (>1 means grouped is faster)
+        if grouped_best['Runtime'] > 0:
+            match_entry['Runtime_speedup'] = moe_best['Runtime'] / grouped_best['Runtime']
+        else:
+            match_entry['Runtime_speedup'] = float('inf')
+            
+        if moe_best['GB/s'] > 0:
+            match_entry['GBs_ratio'] = grouped_best['GB/s'] / moe_best['GB/s']
+        else:
+            match_entry['GBs_ratio'] = float('inf')
+            
+        if moe_best['GFLOPs'] > 0:
+            match_entry['GFLOPs_ratio'] = grouped_best['GFLOPs'] / moe_best['GFLOPs']
+        else:
+            match_entry['GFLOPs_ratio'] = float('inf')
         
         # Add operation names for reference
         match_entry['moe_Operation'] = moe_best['Operation']
@@ -138,6 +146,7 @@ def compare_performance(moe_csv_path, grouped_csv_path, output_csv=None):
     # Display top comparisons
     print("\n" + "-"*150)
     print("TOP 10 CONFIGURATIONS (by GFLOPs ratio, grouped/moe):")
+    print("(Higher ratio means grouped_gemm performs better)")
     print("-"*150)
     
     display_cols = [
@@ -146,16 +155,28 @@ def compare_performance(moe_csv_path, grouped_csv_path, output_csv=None):
         'moe_GFLOPs', 'grouped_GFLOPs', 'GFLOPs_ratio'
     ]
     
+    # Filter out infinite values for display
+    display_df = comparison_df[display_cols].copy()
+    display_df = display_df.replace([float('inf'), -float('inf')], None)
+    
     pd.set_option('display.max_columns', None)
     pd.set_option('display.width', None)
     pd.set_option('display.max_colwidth', 60)
+    pd.set_option('display.float_format', lambda x: f'{x:.3f}' if pd.notna(x) else 'N/A')
     
-    print(comparison_df[display_cols].head(10).to_string(index=False))
+    print(display_df.head(10).to_string(index=False))
     
     print("\n" + "-"*150)
     print("BOTTOM 10 CONFIGURATIONS (by GFLOPs ratio, grouped/moe):")
+    print("(Lower ratio means moe_gemm performs better)")
     print("-"*150)
-    print(comparison_df[display_cols].tail(10).to_string(index=False))
+    print(display_df.tail(10).to_string(index=False))
+    
+    # Reset pandas display options
+    pd.reset_option('display.max_columns')
+    pd.reset_option('display.width')
+    pd.reset_option('display.max_colwidth')
+    pd.reset_option('display.float_format')
     
     # Save to CSV if requested
     if output_csv:
