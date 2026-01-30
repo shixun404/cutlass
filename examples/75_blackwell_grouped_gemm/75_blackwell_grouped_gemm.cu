@@ -756,7 +756,8 @@ int main(int argc, char const **args) {
     // Returning zero so this test passes on older Toolkits. Its actions are no-op.
     return 0;
   }
-
+  // printf("%u\n", sizeof(ElementA));
+  // return 0;
   cudaDeviceProp props;
   int current_device_id;
   CUDA_CHECK(cudaGetDevice(&current_device_id));
