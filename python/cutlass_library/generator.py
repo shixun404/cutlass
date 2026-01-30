@@ -8861,6 +8861,7 @@ def GenerateSM100_TensorOp_16b_UMMA_moe_gemm(manifest, cuda_version, gemm_kind=G
     return
 
   instantiation_level = manifest.get_instantiation_level(pruned_level=494, default_level=494, exhaustive_level=9999)
+  # instantiation_level = manifest.get_instantiation_level(pruned_level=9999, default_level=9999, exhaustive_level=9999)
   # layouts for ABC and their alignments. C alignment will be set later based on output type
   layouts = [
     [[LayoutType.RowMajor,    8], [LayoutType.ColumnMajor, 8], [LayoutType.ColumnMajor, 0]],

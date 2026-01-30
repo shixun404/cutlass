@@ -214,7 +214,7 @@ def main():
         #     'short_name': 'FP8-E4M3'
         # },
         'bf16': {
-            'kernels': 'cutlass3x_sm100_tensorop_moe_gemm_bf16_bf16*',
+            'kernels': 'cutlass3x_sm100_tensorop_moe_gemm_bf16_bf16*f32_bf16*',
             'short_name': 'BF16'
         }
     }
