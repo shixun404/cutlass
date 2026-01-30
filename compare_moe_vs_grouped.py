@@ -152,7 +152,7 @@ def compare_performance(moe_csv_path, grouped_csv_path, output_csv=None):
     print("-"*150)
     
     display_cols = [
-        'cta_m', 'cta_n', 'cta_k', 'stages', 'inst_m', 'inst_n', 'inst_k',
+        'cluster_m', 'cluster_n', 'cluster_k', 'cta_m', 'cta_n', 'cta_k', 'stages', 'inst_m', 'inst_n', 'inst_k',
         'moe_Runtime', 'grouped_Runtime', 'Runtime_speedup',
         'moe_GFLOPs', 'grouped_GFLOPs', 'GFLOPs_ratio'
     ]
