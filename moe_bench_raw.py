@@ -478,6 +478,9 @@ def main():
 
                         n_max = max(distribution)
 
+                        # Collect all results for this specific (dtype, problem size, distribution) combination
+                        combo_results = []
+
                         # Sweep all scheduling / parallel parameters
                         for (cluster_m, cluster_n) in CLUSTER_SHAPES:
                             for raster in RASTERS:
@@ -522,7 +525,7 @@ def main():
 
                                         # Store 1SM result
                                         if gflops_1sm:
-                                            all_results.append({
+                                            combo_results.append({
                                                 'dtype': dtype_config['short_name'],
                                                 'config': '1SM',
                                                 'n': m_hidden,           # using column name 'n' for compatibility
@@ -535,6 +538,7 @@ def main():
                                                 'gflops_1sm': gflops_1sm,
                                                 'gflops_2sm': gflops_2sm if gflops_2sm else 0.0,
                                                 'gflops': max(gflops_1sm, gflops_2sm or 0.0),
+                                                'tflops': max(gflops_1sm, gflops_2sm or 0.0) / 1000.0,
                                                 'kernel': "92_blackwell_moe_gemm_rcgrouped",
                                                 'cluster_m': cluster_m,
                                                 'cluster_n': cluster_n,
@@ -544,7 +548,7 @@ def main():
                                             })
                                         # Store 2SM result (if present)
                                         if gflops_2sm:
-                                            all_results.append({
+                                            combo_results.append({
                                                 'dtype': dtype_config['short_name'],
                                                 'config': '2SM',
                                                 'n': m_hidden,
@@ -557,6 +561,7 @@ def main():
                                                 'gflops_1sm': gflops_1sm if gflops_1sm else 0.0,
                                                 'gflops_2sm': gflops_2sm,
                                                 'gflops': gflops_2sm,
+                                                'tflops': gflops_2sm / 1000.0,
                                                 'kernel': "92_blackwell_moe_gemm_rcgrouped",
                                                 'cluster_m': cluster_m,
                                                 'cluster_n': cluster_n,
@@ -565,13 +570,25 @@ def main():
                                                 'use_pdl': int(use_pdl),
                                             })
 
+                        # Find the best configuration for this (dtype, problem size, distribution) combination
+                        if combo_results:
+                            # Sort by gflops descending and take the best one
+                            best_result = max(combo_results, key=lambda x: x.get('gflops', 0.0))
+                            all_results.append(best_result)
+                            print(f"    Best config: cluster=({best_result['cluster_m']},{best_result['cluster_n']}), "
+                                  f"raster={best_result['raster']}, max_sm={best_result['max_sm']}, "
+                                  f"use_pdl={best_result['use_pdl']}, config={best_result['config']}, "
+                                  f"TFLOPS={best_result['tflops']:.2f}")
+                        else:
+                            print(f"    No valid results for this combination")
+
                     except Exception as e:
                         print(f"    Error: {e}")
                         continue
 
-    # Print summary table
+    # Print summary table (showing only best configurations)
     print("\n" + "=" * 80)
-    print("SUMMARY TABLE")
+    print("SUMMARY TABLE (Best Configurations Only)")
     print("=" * 80)
 
     # Group by config (only one in this script, but keep the structure)
@@ -581,34 +598,32 @@ def main():
             continue
 
         print(f"\n{DTYPE_CONFIGS[dtype_name]['short_name']}:")
-        print("-" * 120)
+        print("-" * 140)
         print(f"{'M':<6} {'K':<6} {'Tokens':<8} {'Dist':<10} {'Cfg':<5} "
-              f"{'Min N':<6} {'Max N':<6} {'cl_m':<5} {'cl_n':<5} "
-              f"{'rast':<5} {'max_sm':<7} {'pdl':<4} "
-              f"{'GF1SM':<10} {'GF2SM':<10} {'GFmax':<10}")
-        print("-" * 120)
+              f"{'cl_m':<5} {'cl_n':<5} {'rast':<5} {'max_sm':<7} {'pdl':<4} "
+              f"{'TFLOPS':<10}")
+        print("-" * 140)
 
         for r in dtype_results:
             print(f"{r['n']:<6} {r['k']:<6} {r['tokens']:<8} {r['dist']:<10} {r.get('config',''): <5}"
-                  f"{r['min_m']:<6} {r['max_m']:<6} "
                   f"{r.get('cluster_m', 0):<5} {r.get('cluster_n', 0):<5} "
                   f"{r.get('raster', ''):<5} {r.get('max_sm', -1):<7} {r.get('use_pdl', 0):<4} "
-                  f"{r.get('gflops_1sm', 0.0):<10.0f} {r.get('gflops_2sm', 0.0):<10.0f} {r.get('gflops', 0.0):<10.0f}")
+                  f"{r.get('tflops', 0.0):<10.2f}")
 
-    # Save summary to CSV
+    # Save summary to CSV (only best configurations)
     summary_file = os.path.join(results_dir, "summary.csv")
     if all_results:
         with open(summary_file, 'w', newline='') as f:
             fieldnames = [
-                'dtype', 'config', 'n', 'k', 'tokens', 'dist',
-                'min_m', 'max_m', 'avg_m',
-                'cluster_m', 'cluster_n', 'raster', 'max_sm', 'use_pdl',
-                'gflops_1sm', 'gflops_2sm', 'gflops', 'kernel',
+                'dtype', 'n', 'k', 'tokens', 'dist',
+                'config', 'cluster_m', 'cluster_n', 'raster', 'max_sm', 'use_pdl',
+                'tflops',
             ]
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(all_results)
         print(f"\nSummary saved to: {summary_file}")
+        print(f"  Total entries: {len(all_results)} (one best config per dtype/problem/dist combination)")
 
     print(f"\nAll results saved in: {results_dir}/")
 
