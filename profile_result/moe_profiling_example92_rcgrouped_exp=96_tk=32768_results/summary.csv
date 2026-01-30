@@ -1,0 +1,9 @@
+dtype,n,k,tokens,dist,config,cluster_m,cluster_n,raster,max_sm,use_pdl,tflops
+RCGrouped-bf16,3072,5120,32768,uniform,1SM,2,2,M,-1,1,1064.61
+RCGrouped-bf16,3072,5120,32768,imbalanced,1SM,2,1,M,-1,0,1111.91
+RCGrouped-bf16,3072,5120,65536,uniform,1SM,2,1,M,-1,1,1492.15
+RCGrouped-bf16,3072,5120,65536,imbalanced,1SM,2,1,M,-1,1,1441.64
+RCGrouped-bf16,4096,7168,32768,uniform,1SM,2,2,M,-1,1,1090.99
+RCGrouped-bf16,4096,7168,32768,imbalanced,1SM,2,1,M,-1,1,1134.04
+RCGrouped-bf16,4096,7168,65536,uniform,1SM,2,1,M,-1,1,1525.97
+RCGrouped-bf16,4096,7168,65536,imbalanced,1SM,2,1,M,-1,1,1461.93
