@@ -441,7 +441,7 @@ struct Options {
       << "Options:\n\n"
       << "  --help                                                       If specified, displays this usage statement\n\n"
       << "  --m=<int>                                                    Sets the M extent of the GEMM for all groups\n"
-      << "  --n=<int>                                                    Sets the N extent of the GEMM for all groups\n"
+      << "  --n=<int>                                                     Sets the N extent of the GEMM for all groups\n"
       << "  --k=<int>                                                    Sets the K extent of the GEMM for all groups\n"
       << "  --groups=<int>                                               Sets the number of individual GEMM problems for Grouped GEMM\n"
       << "  --alpha=<f32>                                                Epilogue scalar alpha\n"
