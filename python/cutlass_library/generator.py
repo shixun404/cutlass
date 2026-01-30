@@ -5239,7 +5239,7 @@ def GenerateSM90_TensorOp_16b_WGMMA_gemm(manifest, cuda_version, gemm_kind=GemmK
   if not CudaToolkitVersionSatisfies(cuda_version, 12, 3 if is_grouped(gemm_kind) else 0):
     return
 
-  instantiation_level = manifest.get_instantiation_level(pruned_level=100, default_level=131, exhaustive_level=9992)
+  instantiation_level = manifest.get_instantiation_level(pruned_level=490, default_level=490, exhaustive_level=9992)
   is_aligned = True
 
   # layouts for ABC and their alignments.
