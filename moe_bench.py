@@ -97,6 +97,7 @@ def run_profiler(problem_file: str, output_csv: str, kernels: str) -> bool:
         f"--output={output_csv}"
     ]
     print(f"    Running profiler...")
+    # print(" ".join(cmd))
     try:
         result = subprocess.run(cmd, capture_output=True, text=True)
         
@@ -214,7 +215,7 @@ def main():
     
     # Collect all results for summary
     all_results = []
-    for NUM_EXPERTS in [24, 48, 96]:
+    for NUM_EXPERTS in [12]:
         random.seed(42)
         
         print("=" * 80)
