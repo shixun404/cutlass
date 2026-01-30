@@ -287,8 +287,8 @@ struct Options {
   float alpha = FLT_MAX;
   float beta  = FLT_MAX;
   float norm_constant = 1.0;
-  int warmup = 1000;
-  int iterations = 1000;
+  int warmup = 10;
+  int iterations = 100;
   int m = 1024, n = 2048, k = 512, groups = 10;
   dim3 cluster_shape = dim3(2,1,1);
   dim3 cluster_shape_fallback = dim3(2,1,1);

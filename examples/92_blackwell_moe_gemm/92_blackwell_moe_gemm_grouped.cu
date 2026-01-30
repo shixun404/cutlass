@@ -191,7 +191,7 @@ struct ExampleRunner {
 
   using ClusterShapeMNK = Shape<_1,_1,_1>;
   using MmaTileMNK    = Shape<_128,_16,Int<128 / sizeof(ElementA)>>;  // use tile size of N=16 to match real use cases (N is typically very small in decoding stage)
-
+  // using MmaTileMNK    = Shape<_128,_256,_64>;  
   // 16B alignment lets us use TMA
   static constexpr int AlignmentA = 128 / cutlass::sizeof_bits<ElementA>::value;
   static constexpr int AlignmentB = 128 / cutlass::sizeof_bits<ElementB>::value;
@@ -332,7 +332,7 @@ struct ExampleRunner {
 
     initialize_block(block_A, seed + 2023);
     initialize_block(block_B, seed + 2022);
-    initialize_block(block_C, seed + 2021);
+    initialize_block(block_C, seed + 2021); 
   }
 
   /// Load a benchmark
