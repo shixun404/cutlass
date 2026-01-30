@@ -46,12 +46,15 @@ for csv_path in CSV_FILES:
         print(f"  -> Empty CSV, skip")
         continue
 
-    last_col_name = df.columns[-1]
+    if "mfu" not in df.keys():
+        last_col_name = df.columns[-1]
 
-    # 计算 MFU
-    df["mfu"] = df[last_col_name] / DIVISOR
+        # 计算 MFU
+        df["mfu"] = df[last_col_name] / DIVISOR
 
-    # 原地保存（如果你想另存，改成 path.with_name(...)）
-    df.to_csv(path, index=False)
+        df = df.sort_values(by="mfu", ascending=False)
+
+        # 原地保存（如果你想另存，改成 path.with_name(...)）
+        df.to_csv(path, index=False)
 
 print("✅ All CSV files processed. MFU column added.")
