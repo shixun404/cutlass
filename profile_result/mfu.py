@@ -3,7 +3,7 @@ import pandas as pd
 from pathlib import Path
 import os
 
-DIVISOR = 2500000.0
+DIVISOR = 989000.0
 
 for fname in os.listdir("."):
     if not fname.endswith(".csv"):
@@ -29,6 +29,12 @@ for fname in os.listdir("."):
         # 计算 MFU
         df["mfu"] = df[last_col_name] / DIVISOR
 
+        df = df.sort_values(by="mfu", ascending=False)
+
+        # 原地保存（如果你想另存，改成 path.with_name(...)）
+        df.to_csv(path, index=False)
+    else:
+        df["mfu"] = df["mfu"] * 2500000 / DIVISOR
         df = df.sort_values(by="mfu", ascending=False)
 
         # 原地保存（如果你想另存，改成 path.with_name(...)）

@@ -3,7 +3,7 @@ import os
 import subprocess
 
 PROFILER = "./tools/profiler/cutlass_profiler"
-OUTDIR = "/root/workspace/zsh/cutlass/profile_result"
+OUTDIR = "/home/tiger/cutlass/profile_result"
 
 # 固定参数
 PROFILING_ITERS = 10
@@ -28,16 +28,8 @@ os.makedirs(OUTDIR, exist_ok=True)
 #
 # In GEMM notation: (m, n, k) = (out_features, tokens, in_features)
 FWD_CASES = [
-    (8192, 7168, 5120),
-    (4096, 7168, 5120),
-    (8192, 5120, 5120),
-    (4096, 5120, 5120),
-    (8192, 9216, 7168),
-    (4096, 9216, 7168),
-    (8192, 7168, 7168),
-    (4096, 7168, 7168),
-    (8192, 155136, 5120),
-]
+    (i, i, i // 8) for i in [2048, 4096, 8192, 16384, 32768]
+] + [(i, i // 8, i) for i in [2048, 4096, 8192, 16384, 32768]]
 
 # dgrad: dX = W^T @ dY
 # - dY has shape [m, n]
@@ -55,9 +47,9 @@ WGRAD_CASES = [(M, K, N) for (M, N, K) in FWD_CASES]
 
 MODES = [
     ("fwd", FWD_CASES, 0),
-    ("dgrad", DGRAD_CASES, 0),
-    ("wgrad", WGRAD_CASES, 0),
-    ("wgrad_accum", WGRAD_CASES, 1),  # accumulation into existing C (beta=1)
+    # ("dgrad", DGRAD_CASES, 0),
+    # ("wgrad", WGRAD_CASES, 0),
+    # ("wgrad_accum", WGRAD_CASES, 1),  # accumulation into existing C (beta=1)
 ]
 
 
@@ -73,7 +65,7 @@ for mode, cases, beta in MODES:
                 f"--profiling-iterations={PROFILING_ITERS}",
                 f"--warmup-iterations={WARMUP_ITERS}",
                 f"--operation={OP}",
-                '--A="bf16:row" --B="bf16:column"',
+                '--A="bf16:row" --B="bf16:row"',
                 f"--beta={beta}",
                 f"--m={M}",
                 f"--n={N}",
