@@ -41,7 +41,7 @@
 
     To run this example:
 
-      $ ./examples/92_blackwell_moe_gemm/92_blackwell_moe_gemm_rcgrouped --m=128 --k=128 --groups=10
+      $ ./examples/92_blackwell_moe_gemm/92_blackwell_moe_gemm_rcgrouped_bf16 --m=128 --k=128 --groups=10
 
       The above example command makes all 10 groups to be sized at the given m, n, k sizes.
       Skipping any of the problem dimensions randomizes it across the different groups.
@@ -49,7 +49,7 @@
 
     To run this example for a set of problems using the benchmark option:
 
-      $ ./examples/92_blackwell_grouped_gemm/92_blackwell_moe_gemm_rcgrouped --benchmark=./test_benchmark.txt
+      $ ./examples/92_blackwell_moe_gemm/92_blackwell_moe_gemm_rcgrouped_bf16 --benchmark=./test_benchmark.txt
 
       Where the test_benchmark.txt may look as such:
         0 256x512x128
@@ -95,9 +95,9 @@ using namespace cute;
 
 using ProblemShape = cutlass::gemm::MoEProblemShape<Shape<int,int,int>>; // <M,N,K> per group
 
-using ElementA = cutlass::float_e4m3_t;                                    // Element type for A matrix operand
-using ElementB = cutlass::float_e4m3_t;                                    // Element type for B matrix operand
-using ElementC = cutlass::half_t;                                          // Element type for C and D matrix operands
+using ElementA = cutlass::bfloat16_t;                                      // Element type for A matrix operand
+using ElementB = cutlass::bfloat16_t;                                      // Element type for B matrix operand
+using ElementC = cutlass::bfloat16_t;                                      // Element type for C and D matrix operands
 
 #if defined(CUTLASS_ARCH_MMA_SM100_SUPPORTED)
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -436,8 +436,8 @@ struct Options {
   /// Prints the usage statement.
   std::ostream & print_usage(std::ostream &out) const {
 
-    out << "92_blackwell_moe_gemm_rcgrouped\n\n"
-      << "  Blackwell FP8 Grouped GEMM using a Warp Specialized kernel.\n\n"
+    out << "92_blackwell_moe_gemm_rcgrouped_bf16\n\n"
+      << "  Blackwell BF16 Grouped GEMM using a Warp Specialized kernel.\n\n"
       << "Options:\n\n"
       << "  --help                                                       If specified, displays this usage statement\n\n"
       << "  --m=<int>                                                    Sets the M extent of the GEMM for all groups\n"
@@ -456,7 +456,7 @@ struct Options {
                                                                                              
     out
       << "\n\nExamples:\n\n"
-      << "$ " << "92_blackwell_moe_gemm_rcgrouped" << " --m=1024 --n=512 --k=1024 --groups=10 --alpha=2 --beta=0.707 \n\n";
+      << "$ " << "92_blackwell_moe_gemm_rcgrouped_bf16" << " --m=1024 --n=512 --k=1024 --groups=10 --alpha=2 --beta=0.707 \n\n";
 
     return out;
   }
