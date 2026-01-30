@@ -95,9 +95,12 @@ using namespace cute;
 
 using ProblemShape = cutlass::gemm::MoEProblemShape<Shape<int,int,int>>; // <M,N,K> per group
 
-using ElementA = cutlass::float_e4m3_t;                                    // Element type for A matrix operand
-using ElementB = cutlass::float_e4m3_t;                                    // Element type for B matrix operand
-using ElementC = cutlass::half_t;                                          // Element type for C and D matrix operands
+// using ElementA = cutlass::float_e4m3_t;                                    // Element type for A matrix operand
+// using ElementB = cutlass::float_e4m3_t;                                    // Element type for B matrix operand
+// using ElementC = cutlass::half_t;                                          // Element type for C and D matrix operands
+using ElementA = cutlass::bfloat16_t;                                      // Element type for A matrix operand
+using ElementB = cutlass::bfloat16_t;                                      // Element type for B matrix operand
+using ElementC = cutlass::bfloat16_t;                                      // Element type for C and D matrix operands
 
 #if defined(CUTLASS_ARCH_MMA_SM100_SUPPORTED)
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -409,9 +412,9 @@ struct Options {
       int idx = -1;
       std::string extent_str;
 
-      file >> idx >> extent_str;
+      file >> extent_str;
 
-      if (idx < 0 || extent_str.empty()) {
+      if (extent_str.empty()) {
         break;
       }
 
@@ -727,12 +730,12 @@ bool verify(const Options &options) {
 template <typename Gemm>
 int run(Options &options, bool host_problem_shapes_available = true)
 {
-  std::cout << "  Problem Sizes, Alpha, Beta " << std::endl;
-  for (int32_t i = 0; i < options.groups; ++i) {
-    std::cout << "    " << options.problem_sizes_host.at(i);
-    std::cout << ", " << alpha_host.at(i) << ", " << beta_host.at(i) << std::endl;
-  }
-  std::cout << "  Groups      : " << options.groups  << std::endl;
+  // std::cout << "  Problem Sizes, Alpha, Beta " << std::endl;
+  // for (int32_t i = 0; i < options.groups; ++i) {
+  //   std::cout << "    " << options.problem_sizes_host.at(i);
+  //   std::cout << ", " << alpha_host.at(i) << ", " << beta_host.at(i) << std::endl;
+  // }
+  // std::cout << "  Groups      : " << options.groups  << std::endl;
 
   // Instantiate CUTLASS kernel depending on templates
   Gemm gemm;

@@ -72,6 +72,7 @@
 
 
 using namespace cute;
+using ProblemShape = cutlass::gemm::MoEProblemShape<Shape<int,int,int>>; // <M,N,K> per group
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -135,6 +136,22 @@ struct Options {
 
     return out;
   }
+    /// Compute performance in GFLOP/s
+  double gflops(double runtime_s, std::vector<typename ProblemShape::UnderlyingProblemShape> problem_sizes_host) const
+  {
+    // Number of real-valued multiply-adds
+    uint64_t fmas = uint64_t();
+
+    for (auto const & problem : problem_sizes_host) {
+      fmas += static_cast<uint64_t>(get<0>(problem)) *
+              static_cast<uint64_t>(get<1>(problem)) *
+              static_cast<uint64_t>(get<2>(problem));
+    }
+    // Two flops per multiply-add
+    uint64_t flop = uint64_t(2) * uint64_t(fmas);
+    double gflop = double(flop) / double(1.0e9);
+    return gflop / runtime_s;
+  }
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -181,17 +198,21 @@ struct ExampleRunner {
   using LayoutC = cutlass::layout::ColumnMajor;
   using LayoutD = cutlass::layout::ColumnMajor;
 
-  using ElementA = cutlass::float_e4m3_t;
-  using ElementB = cutlass::float_e4m3_t;
-  using ElementC = cutlass::half_t;
-  using ElementD = cutlass::half_t;
+  // using ElementA = cutlass::float_e4m3_t;
+  // using ElementB = cutlass::float_e4m3_t;
+  // using ElementC = cutlass::half_t;
+  // using ElementD = cutlass::half_t;
+  using ElementA = cutlass::bfloat16_t;                                      // Element type for A matrix operand
+  using ElementB = cutlass::bfloat16_t;                                      // Element type for B matrix operand
+  using ElementC = cutlass::bfloat16_t;                                      // Element type for C and D matrix operands
+  using ElementD = cutlass::bfloat16_t;                                      // Element type for C and D matrix operands
   using ElementAccumulator = float;
   using ElementCompute = float;
   using ElementScalar = float;
 
   using ClusterShapeMNK = Shape<_1,_1,_1>;
-  using MmaTileMNK    = Shape<_128,_16,Int<128 / sizeof(ElementA)>>;  // use tile size of N=16 to match real use cases (N is typically very small in decoding stage)
-  // using MmaTileMNK    = Shape<_128,_256,_64>;  
+  // using MmaTileMNK    = Shape<_128,_16,Int<128 / sizeof(ElementA)>>;  // use tile size of N=16 to match real use cases (N is typically very small in decoding stage)
+  using MmaTileMNK    = Shape<_128,_128,_64>;  
   // 16B alignment lets us use TMA
   static constexpr int AlignmentA = 128 / cutlass::sizeof_bits<ElementA>::value;
   static constexpr int AlignmentB = 128 / cutlass::sizeof_bits<ElementB>::value;
@@ -270,7 +291,7 @@ struct ExampleRunner {
     for (int i = 0; i < problem_size.num_groups; i++) {
       auto problem = problem_sizes_host.at(i);
       auto [M, N, K] = problem;
-      printf("group [%d] : M = %d, N = %d, K = %d\n", i, M, N, K);
+      // printf("group [%d] : M = %d, N = %d, K = %d\n", i, M, N, K);
 
       cutlass::TensorRef ref_A(block_A.get() + size_t(1) * i * maxM * maxK, Gemm::LayoutA(maxK));
       cutlass::TensorRef ref_B(block_B.get() + size_t(1) * i * maxN * maxK, Gemm::LayoutB(maxK));
@@ -349,9 +370,9 @@ struct ExampleRunner {
       int idx = -1;
       std::string extent_str;
 
-      file >> idx >> extent_str;
+      file >> extent_str;
 
-      if (idx < 0 || extent_str.empty()) {
+      if (extent_str.empty()) {
         break;
       }
 
@@ -494,10 +515,10 @@ struct ExampleRunner {
       // Compute average setup and runtime and FLOPs.
       float elapsed_ms       = timer.elapsed_millis();
       double avg_runtime_ms  = double(elapsed_ms) / double(options.iterations);
-      double flops           = double(int64_t(2) * options.m * options.n * options.k * options.groups) / (avg_runtime_ms / 1000.0);
+      double gflops          = options.gflops(avg_runtime_ms / 1000.0, problem_sizes_host);
 
       std::cout << "  Avg runtime : " << avg_runtime_ms << " ms" << std::endl;
-      std::cout << "  TFLOPS      : " << flops / 1e12 << std::endl;
+      std::cout << "  TFLOPS      : " << gflops / 1e3 << std::endl;
     }
 
     return true;

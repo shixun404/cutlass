@@ -409,9 +409,10 @@ struct Options {
       int idx = -1;
       std::string extent_str;
 
-      file >> idx >> extent_str;
+      file >> extent_str;
 
-      if (idx < 0 || extent_str.empty()) {
+      // if (idx < 0 || extent_str.empty()) {
+      if (extent_str.empty()) {
         break;
       }
 
