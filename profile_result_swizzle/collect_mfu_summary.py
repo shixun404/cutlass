@@ -7,7 +7,10 @@ OUT_FILE = "summary.csv"
 rows = []
 
 for fname in os.listdir("."):
-
+    if "swizzle=8" not in fname:
+        continue
+    if "fwd" not in fname:
+        continue
     if not fname.endswith(".csv"):
         continue
 
