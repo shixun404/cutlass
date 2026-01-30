@@ -6,8 +6,8 @@ import os
 DIVISOR = 2500000.0
 
 for fname in os.listdir("."):
-    if "fwd" not in fname:
-        continue
+    # if "fwd" not in fname:
+    #     continue
     if not fname.endswith(".csv"):
         continue
     csv_path = fname
