@@ -211,7 +211,7 @@ def main():
     }
     
     # Random seed for reproducibility
-    results_dir = f"profile_result/gb200_grouped_gemm_results_swizzle_2"
+    results_dir = f"profile_result/gb200_grouped_gemm_results_swizzle"
     os.makedirs(results_dir, exist_ok=True)
     
     # Collect all results for summary
@@ -246,7 +246,7 @@ def main():
                     
                     for dist_name, dist_func in distributions.items():
                         print(f"\n  M_total={total_tokens}, Distribution={dist_name}")
-                        for swizzle_size in [2]:
+                        for swizzle_size in [8]:
                             
                             try:
                                 # Generate distribution
@@ -275,8 +275,8 @@ def main():
                                     f"results_{dtype_name}_n{n}k{k}_m{total_tokens}_exp{NUM_EXPERTS}_{dist_name}.csv"
                                 )
                                 
-                                if run_profiler(problem_file, output_csv, dtype_config['kernels'],swizzle_size):
-                                # if True:
+                                # if run_profiler(problem_file, output_csv, dtype_config['kernels'],swizzle_size):
+                                if True:
                                     # Get best kernel
                                     kernel_name, gflops = get_best_kernel(output_csv)
                                     if kernel_name and gflops:
@@ -324,13 +324,13 @@ def main():
         
         for r in dtype_results:
             print(f"{r['n']:<6} {r['k']:<6} {r['tokens']:<8} {r['exp']:<8} {r['dist']:<10} "
-                  f"{r['min_m']:<6} {r['max_m']:<6} {r['swizzle']:<6} {r['gflops']:<10.0f}")
+                  f"{r['min_m']:<6} {r['max_m']:<6} {r['swizzle_size']:<6} {r['gflops']:<10.0f}")
     
     # Save summary to CSV
     summary_file = os.path.join(results_dir, "summary.csv")
     if all_results:
         with open(summary_file, 'w', newline='') as f:
-            fieldnames = ['dtype', 'n', 'k', 'tokens', 'exp', 'dist', 'min_m', 'max_m', 'avg_m', 'swizzle', 'gflops', 'kernel']
+            fieldnames = ['dtype', 'n', 'k', 'tokens', 'exp', 'dist', 'min_m', 'max_m', 'avg_m', 'swizzle_size', 'gflops', 'kernel']
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(all_results)
