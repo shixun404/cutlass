@@ -66,6 +66,8 @@ def compare_performance(moe_csv_path, grouped_csv_path, output_csv=None):
     moe_keys = set(moe_df['key'])
     grouped_keys = set(grouped_df['key'])
     common_keys = moe_keys & grouped_keys
+
+    print(f"\nCommon keys: {common_keys}")
     
     print(f"\nCommon configurations (matching keys): {len(common_keys)}")
     print(f"Moe-only configurations: {len(moe_keys - grouped_keys)}")
