@@ -8860,7 +8860,7 @@ def GenerateSM100_TensorOp_16b_UMMA_moe_gemm(manifest, cuda_version, gemm_kind=G
   if not CudaToolkitVersionSatisfies(cuda_version, 13, 0):
     return
 
-  instantiation_level = manifest.get_instantiation_level(pruned_level=490, default_level=490, exhaustive_level=9999)
+  instantiation_level = manifest.get_instantiation_level(pruned_level=494, default_level=494, exhaustive_level=9999)
   # layouts for ABC and their alignments. C alignment will be set later based on output type
   layouts = [
     [[LayoutType.RowMajor,    8], [LayoutType.ColumnMajor, 8], [LayoutType.ColumnMajor, 0]],
@@ -8877,7 +8877,7 @@ def GenerateSM100_TensorOp_16b_UMMA_moe_gemm(manifest, cuda_version, gemm_kind=G
   cluster_shapes= [[1,1,1]]
 
   tile_schedulers = [
-    TileSchedulerType.Default
+    TileSchedulerType.Default, TileSchedulerType.StreamK
   ]
   # 1xSM MMA kernels
   for math_inst in math_instructions_1sm:
@@ -8939,7 +8939,7 @@ def GenerateSM100_TensorOp_fp8_UMMA_moe_gemm(manifest, cuda_version, gemm_kind=G
   cluster_shapes= [[1,1,1]]
   epi_type = DataType.f32
   tile_schedulers = [
-    TileSchedulerType.Default
+    TileSchedulerType.Default, TileSchedulerType.StreamK
   ]
   # 1xSM MMA kernels
   for math_inst in math_instructions_1sm:

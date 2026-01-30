@@ -275,7 +275,9 @@ Status GroupedGemmOperationProfiler::GroupedGemmProblem::parse(
     max_problem_size_3x = {max_m, max_n, max_k};
   }
   if (is_moe) {
+    // printf("max_problem_size_3x: %d %d %d\n", max_problem_size_3x[0], max_problem_size_3x[1], max_problem_size_3x[2]);
     for(size_t group_idx = 0; group_idx < problem_sizes.size(); group_idx++) { 
+      // printf("problem_sizes[group_idx].m(): %d, problem_sizes[group_idx].n(): %d, problem_sizes[group_idx].k(): %d\n", problem_sizes[group_idx].m(), problem_sizes[group_idx].n(), problem_sizes[group_idx].k());
       if (problem_sizes[group_idx].m() != max_problem_size_3x[0]   ||
           problem_sizes[group_idx].k() != max_problem_size_3x[2]) {
         std::cerr << "Problem size M:"<< problem_sizes[group_idx].m() << "K:" << problem_sizes[group_idx].k() << " for group " << group_idx << "should be equal to "
