@@ -67,8 +67,6 @@ def compare_performance(moe_csv_path, grouped_csv_path, output_csv=None):
     grouped_keys = set(grouped_df['key'])
     common_keys = moe_keys & grouped_keys
 
-    print(f"\nCommon keys: {common_keys}")
-    print(f"\nMoe keys: {moe_keys}")
     
     print(f"\nCommon configurations (matching keys): {len(common_keys)}")
     print(f"Moe-only configurations: {len(moe_keys - grouped_keys)}")
@@ -99,18 +97,18 @@ def compare_performance(moe_csv_path, grouped_csv_path, output_csv=None):
         # Calculate speedup/ratio
         # Runtime_speedup: moe/grouped (>1 means moe is slower)
         # GFLOPs_ratio: grouped/moe (>1 means grouped is faster)
-        if grouped_best['Runtime'] > 0:
+        if moe_best['Runtime'] > 0:
             match_entry['Runtime_speedup'] =  grouped_best['Runtime'] / moe_best['Runtime']
         else:
             match_entry['Runtime_speedup'] = float('inf')
             
-        if moe_best['GB/s'] > 0:
-            match_entry['GBs_ratio'] = grouped_best['GB/s'] / moe_best['GB/s']
+        if grouped_best['GB/s'] > 0:
+            match_entry['GBs_ratio'] = moe_best['GB/s'] / grouped_best['GB/s']
         else:
             match_entry['GBs_ratio'] = float('inf')
             
-        if moe_best['GFLOPs'] > 0:
-            match_entry['GFLOPs_ratio'] = grouped_best['GFLOPs'] / moe_best['GFLOPs']
+        if grouped_best['GFLOPs'] > 0:
+            match_entry['GFLOPs_ratio'] = moe_best['GFLOPs'] / grouped_best['GFLOPs'] 
         else:
             match_entry['GFLOPs_ratio'] = float('inf')
         
