@@ -170,7 +170,7 @@ def main():
     # ]
 
     # M13
-    NUM_EXPERTS = 96
+    NUM_EXPERTS = 24
     BASE_TOKENS = 32768
     MULTIPLIERS = [1, 2, 4, 8, 16]
     # NUM_EXPERTS = 256
