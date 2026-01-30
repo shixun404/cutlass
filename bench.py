@@ -20,8 +20,14 @@ SEED = 2026
 
 os.makedirs(OUTDIR, exist_ok=True)
 
-# 图中所有测试用例 (M, N, K)
-CASES = [
+
+# Forward (fwd): W @ X
+# - A = W has shape [m, k]
+# - B = X has shape [k, n]   (n = tokens)
+# - C/D = Y has shape [m, n]
+#
+# In GEMM notation: (m, n, k) = (out_features, tokens, in_features)
+FWD_CASES = [
     (8192, 7168, 5120),
     (4096, 7168, 5120),
     (8192, 5120, 5120),
@@ -33,35 +39,69 @@ CASES = [
     (8192, 155136, 5120),
 ]
 
-for M, N, K in CASES:
-    out_csv = os.path.join(
-        OUTDIR,
-        f"gemm_{M}x{N}x{K}_itr={PROFILING_ITERS}_warmup={WARMUP_ITERS}_dist=uminus005_uplus005.csv"
-    )
+# dgrad: dX = W^T @ dY
+# - dY has shape [m, n]
+# - W^T has shape [k, m]
+# - dX has shape [k, n]
+# GEMM(m, n, k) = (k, n, m)
+DGRAD_CASES = [(K, N, M) for (M, N, K) in FWD_CASES]
 
-    cmd = [
-        PROFILER,
-        f"--profiling-iterations={PROFILING_ITERS}",
-        f"--warmup-iterations={WARMUP_ITERS}",
-        f"--operation={OP}",
-        '--kernels="*stream_k*"',
-        '--A="bf16:row" --B="bf16:column"',
-        f"--m={M}",
-        f"--n={N}",
-        f"--k={K}",
-        "--dist=" + DIST,
-        "--sort-results=1"
-    ]
+# wgrad: dW = dY @ X^T
+# - dY has shape [m, n]
+# - X^T has shape [n, k]
+# - dW has shape [m, k]
+# GEMM(m, n, k) = (m, k, n)
+WGRAD_CASES = [(M, K, N) for (M, N, K) in FWD_CASES]
 
-    # print(cmd.join(""))
-    # print(" ".join(cmd))
-    if SEED is not None:
-        cmd.append(f"--seed={SEED}")
+MODES = [
+    ("fwd", FWD_CASES, 0),
+    ("dgrad", DGRAD_CASES, 0),
+    ("wgrad", WGRAD_CASES, 0),
+    ("wgrad_accum", WGRAD_CASES, 1),  # accumulation into existing C (beta=1)
+]
 
-    cmd.append(f'--output={out_csv}')
 
-    # print(f"\n=== Running GEMM: M={M}, N={N}, K={K}")
-    print(" ".join(cmd))
+for mode, cases, beta in MODES:
+    for M, N, K in cases:
+        out_csv = os.path.join(
+            OUTDIR,
+            f"gemm_{mode}_{M}x{N}x{K}_itr={PROFILING_ITERS}_warmup={WARMUP_ITERS}_beta={beta}_dist=uminus005_uplus005.csv"
+        )
+        if beta == 0:
+            cmd = [
+                PROFILER,
+                f"--profiling-iterations={PROFILING_ITERS}",
+                f"--warmup-iterations={WARMUP_ITERS}",
+                f"--operation={OP}",
+                '--A="bf16:row" --B="bf16:column"',
+                f"--beta={beta}",
+                f"--m={M}",
+                f"--n={N}",
+                f"--k={K}",
+                "--dist=" + DIST,
+            ]
+        else:
+            cmd = [
+                PROFILER,
+                f"--profiling-iterations={PROFILING_ITERS}",
+                f"--warmup-iterations={WARMUP_ITERS}",
+                f"--operation={OP}",
+                '--kernels="*bf16_bf16_f32*f32*"',
+                '--A="bf16:row" --B="bf16:column" --C="f32:row" --D="f32:row"',
+                f"--beta={beta}",
+                f"--m={M}",
+                f"--n={N}",
+                f"--k={K}",
+                "--dist=" + DIST,
+            ]
+
+        if SEED is not None:
+            cmd.append(f"--seed={SEED}")
+
+        cmd.append(f'--output={out_csv}')
+
+        # print(f"\n=== Running GEMM: M={M}, N={N}, K={K}")
+        print(" ".join(cmd))
 
     # subprocess.run(cmd, check=True, cwd="/root/workspace/zsh/cutlass/build_gemm")
 
