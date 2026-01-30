@@ -7,6 +7,7 @@ OUT_FILE = "summary.csv"
 rows = []
 
 for fname in os.listdir("."):
+
     if not fname.endswith(".csv"):
         continue
 
