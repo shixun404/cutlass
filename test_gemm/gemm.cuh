@@ -80,8 +80,9 @@ using CollectiveEpilogue =
     EpilogueFusion
   >::CollectiveOp;
 
-using StageCount = cutlass::gemm::collective::StageCountAutoCarveout<
-      static_cast<int>(sizeof(typename CollectiveEpilogue::SharedStorage))>;
+using StageCount = cutlass::gemm::collective::StageCount<3>;;
+// using StageCount = cutlass::gemm::collective::StageCountAutoCarveout<
+//       static_cast<int>(sizeof(typename CollectiveEpilogue::SharedStorage))>;
 
 using CollectiveMma =
   typename cutlass::gemm::collective::CollectiveBuilder<
