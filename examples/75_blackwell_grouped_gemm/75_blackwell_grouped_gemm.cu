@@ -93,9 +93,13 @@
 using namespace cute;
 
 using ProblemShape = cutlass::gemm::GroupProblemShape<Shape<int,int,int>>; // <M,N,K> per group
-using ElementA = cutlass::float_e4m3_t;                                    // Element type for A matrix operand
-using ElementB = cutlass::float_e4m3_t;                                    // Element type for B matrix operand
-using ElementC = cutlass::half_t;                                          // Element type for C and D matrix operands
+// using ElementA = cutlass::float_e4m3_t;                                    // Element type for A matrix operand
+// using ElementB = cutlass::float_e4m3_t;                                    // Element type for B matrix operand
+// using ElementC = cutlass::half_t;                                          // Element type for C and D matrix operands
+using ElementA = cutlass::bfloat16_t;                                      // Element type for A matrix operand
+using ElementB = cutlass::bfloat16_t;                                      // Element type for B matrix operand
+using ElementC = cutlass::bfloat16_t;                                      // Element type for C and D matrix operands
+using ElementD = cutlass::bfloat16_t;                                      // Element type for C and D matrix operands
 
 #if defined(CUTLASS_ARCH_MMA_SM100_SUPPORTED)
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -124,13 +128,15 @@ using ClusterShape = Shape<int32_t,int32_t,_1>;
 
 // Different configs for 1SM and 2SM MMA kernel
 struct MMA1SMConfig {
-  using MmaTileShape     = Shape<_128,_256,Int<128 / sizeof(ElementA)>>;
+  // using MmaTileShape     = Shape<_128,_256,Int<128 / sizeof(ElementA)>>;
+  using MmaTileShape     = Shape<_128,_128,_64>;
   using KernelSchedule   = cutlass::gemm::KernelPtrArrayTmaWarpSpecialized1SmSm100;   // Kernel to launch
   using EpilogueSchedule = cutlass::epilogue::PtrArrayTmaWarpSpecialized1Sm;          // Epilogue to launch
 };
 
 struct MMA2SMConfig {
-  using MmaTileShape     = Shape<_256,_256,Int<128 / sizeof(ElementA)>>;
+  // using MmaTileShape     = Shape<_256,_256,Int<128 / sizeof(ElementA)>>;
+  using MmaTileShape     = Shape<_256,_256,_64>;
   using KernelSchedule   = cutlass::gemm::KernelPtrArrayTmaWarpSpecialized2SmSm100;   // Kernel to launch
   using EpilogueSchedule = cutlass::epilogue::PtrArrayTmaWarpSpecialized2Sm;          // Epilogue to launch
 };
@@ -246,7 +252,7 @@ struct Options {
 
   float alpha = FLT_MAX;
   float beta  = FLT_MAX;
-  int iterations = 10;
+  int iterations = 100;
   int m = 1024, n = 2048, k = 512, groups = 10;
   dim3 cluster_shape = dim3(4,2,1);
   dim3 cluster_shape_fallback = dim3(2,1,1);
@@ -342,9 +348,10 @@ struct Options {
       int idx = -1;
       std::string extent_str;
 
-      file >> idx >> extent_str;
+      file >> extent_str;
 
-      if (idx < 0 || extent_str.empty()) {
+      // if (idx < 0 || extent_str.empty()) {
+      if (extent_str.empty()) {
         break;
       }
 
@@ -680,12 +687,12 @@ bool verify(const Options &options) {
 template <typename Gemm>
 int run(Options &options, bool host_problem_shapes_available = true)
 {
-  std::cout << "  Problem Sizes, Alpha, Beta " << std::endl;
-  for (int32_t i = 0; i < options.groups; ++i) {
-    std::cout << "    " << options.problem_sizes_host.at(i);
-    std::cout << ", " << alpha_host.at(i) << ", " << beta_host.at(i) << std::endl;
-  }
-  std::cout << "  Groups      : " << options.groups  << std::endl;
+  // std::cout << "  Problem Sizes, Alpha, Beta " << std::endl;
+  // for (int32_t i = 0; i < options.groups; ++i) {
+  //   std::cout << "    " << options.problem_sizes_host.at(i);
+  //   std::cout << ", " << alpha_host.at(i) << ", " << beta_host.at(i) << std::endl;
+  // }
+  // std::cout << "  Groups      : " << options.groups  << std::endl;
 
   // Instantiate CUTLASS kernel depending on templates
   Gemm gemm;

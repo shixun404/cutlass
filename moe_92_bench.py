@@ -170,7 +170,7 @@ def main():
     # M13
     NUM_EXPERTS = 96
     BASE_TOKENS = 32768
-    MULTIPLIERS = [1, 2]
+    MULTIPLIERS = [1]
     # NUM_EXPERTS = 256
     # BASE_TOKENS = NUM_EXPERTS
     # MULTIPLIERS = [1, 2, 4, 8, 16]
@@ -184,7 +184,7 @@ def main():
     # Multiple NK configurations
     NK_CONFIGS = [
         (3072, 5120),   # Config 1
-        (4096, 7168),   # Config 2
+        # (4096, 7168),   # Config 2
     ]
     
     # Data type configurations
@@ -221,7 +221,7 @@ def main():
     
     # Distribution types
     distributions = {
-        'uniform': generate_uniform_distribution,
+        # 'uniform': generate_uniform_distribution,
         'imbalanced': generate_imbalanced_distribution,
     }
     
@@ -238,7 +238,7 @@ def main():
     print(f"Distributions: {list(distributions.keys())}")
     print("=" * 80)
     
-    results_dir = f"moe_profiling_example92_exp={NUM_EXPERTS}_tk={BASE_TOKENS}_results"
+    results_dir = f"profile_result/moe_profiling_example92_exp={NUM_EXPERTS}_tk={BASE_TOKENS}_results"
     os.makedirs(results_dir, exist_ok=True)
     
     # Collect all results for summary
