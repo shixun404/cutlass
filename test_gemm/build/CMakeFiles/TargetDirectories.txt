@@ -1,3 +1,0 @@
-/home/tiger/cutlass/test_gemm/build/CMakeFiles/run_gemm.dir
-/home/tiger/cutlass/test_gemm/build/CMakeFiles/edit_cache.dir
-/home/tiger/cutlass/test_gemm/build/CMakeFiles/rebuild_cache.dir
