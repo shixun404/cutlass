@@ -128,16 +128,46 @@ def compare_performance(moe_csv_path, grouped_csv_path, output_csv=None):
     # Sort by GFLOPs ratio (grouped/moe)
     comparison_df = comparison_df.sort_values('GFLOPs_ratio', ascending=False)
     
+    # Find best performing configurations for each implementation
+    moe_best_runtime = moe_df.loc[moe_df['Runtime'].idxmin()]
+    moe_best_gflops = moe_df.loc[moe_df['GFLOPs'].idxmax()]
+    grouped_best_runtime = grouped_df.loc[grouped_df['Runtime'].idxmin()]
+    grouped_best_gflops = grouped_df.loc[grouped_df['GFLOPs'].idxmax()]
+    
     # Display results
     print("\n" + "="*150)
-    print("PERFORMANCE COMPARISON (Grouped GEMM / Moe GEMM)")
+    print("PERFORMANCE COMPARISON (Moe GEMM / Grouped GEMM)")
     print("="*150)
     
-    # Summary statistics
-    print("\nSummary Statistics:")
-    print(f"  Average Runtime Speedup (moe/grouped): {comparison_df['Runtime_speedup'].mean():.3f}x")
-    print(f"  Average GB/s Ratio (grouped/moe): {comparison_df['GBs_ratio'].mean():.3f}x")
-    print(f"  Average GFLOPs Ratio (grouped/moe): {comparison_df['GFLOPs_ratio'].mean():.3f}x")
+    # Best performance for each implementation
+    print("\nBest Performance for Each Implementation:")
+    print("\nMoe GEMM:")
+    print(f"  Best Runtime: {moe_best_runtime['Runtime']:.6f} ms (GFLOPs: {moe_best_runtime['GFLOPs']:.2f})")
+    print(f"    Config: cta={moe_best_runtime['cta_m']}x{moe_best_runtime['cta_n']}x{moe_best_runtime['cta_k']}, "
+          f"inst={moe_best_runtime['inst_m']}x{moe_best_runtime['inst_n']}x{moe_best_runtime['inst_k']}, "
+          f"stages={moe_best_runtime['stages']}, cluster={moe_best_runtime['cluster_m']}x{moe_best_runtime['cluster_n']}x{moe_best_runtime['cluster_k']}")
+    print(f"  Best GFLOPs: {moe_best_gflops['GFLOPs']:.2f} (Runtime: {moe_best_gflops['Runtime']:.6f} ms)")
+    print(f"    Config: cta={moe_best_gflops['cta_m']}x{moe_best_gflops['cta_n']}x{moe_best_gflops['cta_k']}, "
+          f"inst={moe_best_gflops['inst_m']}x{moe_best_gflops['inst_n']}x{moe_best_gflops['inst_k']}, "
+          f"stages={moe_best_gflops['stages']}, cluster={moe_best_gflops['cluster_m']}x{moe_best_gflops['cluster_n']}x{moe_best_gflops['cluster_k']}")
+    
+    print("\nGrouped GEMM:")
+    print(f"  Best Runtime: {grouped_best_runtime['Runtime']:.6f} ms (GFLOPs: {grouped_best_runtime['GFLOPs']:.2f})")
+    print(f"    Config: cta={grouped_best_runtime['cta_m']}x{grouped_best_runtime['cta_n']}x{grouped_best_runtime['cta_k']}, "
+          f"inst={grouped_best_runtime['inst_m']}x{grouped_best_runtime['inst_n']}x{grouped_best_runtime['inst_k']}, "
+          f"stages={grouped_best_runtime['stages']}, cluster={grouped_best_runtime['cluster_m']}x{grouped_best_runtime['cluster_n']}x{grouped_best_runtime['cluster_k']}")
+    print(f"  Best GFLOPs: {grouped_best_gflops['GFLOPs']:.2f} (Runtime: {grouped_best_gflops['Runtime']:.6f} ms)")
+    print(f"    Config: cta={grouped_best_gflops['cta_m']}x{grouped_best_gflops['cta_n']}x{grouped_best_gflops['cta_k']}, "
+          f"inst={grouped_best_gflops['inst_m']}x{grouped_best_gflops['inst_n']}x{grouped_best_gflops['inst_k']}, "
+          f"stages={grouped_best_gflops['stages']}, cluster={grouped_best_gflops['cluster_m']}x{grouped_best_gflops['cluster_n']}x{grouped_best_gflops['cluster_k']}")
+    
+    # Summary statistics for matched configurations
+    print("\n" + "-"*150)
+    print("Summary Statistics (Matched Configurations Only):")
+    print("-"*150)
+    print(f"  Average Runtime Speedup (grouped/moe): {comparison_df['Runtime_speedup'].mean():.3f}x")
+    print(f"  Average GB/s Ratio (moe/grouped): {comparison_df['GBs_ratio'].mean():.3f}x")
+    print(f"  Average GFLOPs Ratio (moe/grouped): {comparison_df['GFLOPs_ratio'].mean():.3f}x")
     
     print(f"\n  Best Runtime Speedup: {comparison_df['Runtime_speedup'].max():.3f}x")
     print(f"  Worst Runtime Speedup: {comparison_df['Runtime_speedup'].min():.3f}x")
@@ -146,8 +176,8 @@ def compare_performance(moe_csv_path, grouped_csv_path, output_csv=None):
     
     # Display top comparisons
     print("\n" + "-"*150)
-    print("TOP 10 CONFIGURATIONS (by GFLOPs ratio, grouped/moe):")
-    print("(Higher ratio means grouped_gemm performs better)")
+    print("TOP 10 CONFIGURATIONS (by GFLOPs ratio, moe/grouped):")
+    print("(Higher ratio means moe_gemm performs better)")
     print("-"*150)
     
     display_cols = [
@@ -168,8 +198,8 @@ def compare_performance(moe_csv_path, grouped_csv_path, output_csv=None):
     print(display_df.head(10).to_string(index=False))
     
     print("\n" + "-"*150)
-    print("BOTTOM 10 CONFIGURATIONS (by GFLOPs ratio, grouped/moe):")
-    print("(Lower ratio means moe_gemm performs better)")
+    print("BOTTOM 10 CONFIGURATIONS (by GFLOPs ratio, moe/grouped):")
+    print("(Lower ratio means grouped_gemm performs better)")
     print("-"*150)
     print(display_df.tail(10).to_string(index=False))
     
