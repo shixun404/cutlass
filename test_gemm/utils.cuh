@@ -1,6 +1,16 @@
 #include "gemm.cuh"
 
 static inline int ceil_div(int a, int b) { return (a + b - 1) / b; }
+
+template <class T>
+void print_pretty() {
+#if defined(__clang__) || defined(__GNUC__)
+  std::cout << __PRETTY_FUNCTION__ << "\n";
+#elif defined(_MSC_VER)
+  std::cout << __FUNCSIG__ << "\n";
+#endif
+}
+
 // Command line options parsing
 struct Options {
 
@@ -220,6 +230,9 @@ int run(Options &options)
 
   // Instantiate CUTLASS kernel depending on templates
   Gemm gemm;
+
+  // print_pretty<GemmKernel>();
+  print_pretty<Gemm>();
 
   // Create a structure of gemm kernel arguments suitable for invoking an instance of Gemm
   auto arguments = args_from_options(options);
