@@ -97,7 +97,7 @@ def compare_performance(moe_csv_path, grouped_csv_path, output_csv=None):
         # Runtime_speedup: moe/grouped (>1 means moe is slower)
         # GFLOPs_ratio: grouped/moe (>1 means grouped is faster)
         if grouped_best['Runtime'] > 0:
-            match_entry['Runtime_speedup'] = moe_best['Runtime'] / grouped_best['Runtime']
+            match_entry['Runtime_speedup'] =  grouped_best['Runtime'] / moe_best['Runtime']
         else:
             match_entry['Runtime_speedup'] = float('inf')
             
