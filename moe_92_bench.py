@@ -82,7 +82,7 @@ def write_problem_sizes(distribution: List[int], n: int, k: int, filename: str):
             f.write(f"{n}x{m}x{k}\n")
     return filename
 
-def run_profiler(problem_file: str, output_csv: str, kernels: str) -> bool:
+def run_profiler(problem_file: str, output_csv: str, kernels: str, swizzle_size=1,) -> bool:
     """Run cutlass_profiler and capture output"""
     cmd = [
         "./build_moe/tools/profiler/cutlass_profiler",
@@ -94,6 +94,7 @@ def run_profiler(problem_file: str, output_csv: str, kernels: str) -> bool:
         "--warmup-iterations=1",
         "--alpha=1",
         "--beta=0",
+        f"--swizzle_size={swizzle_size}",
         f"--output={output_csv}"
     ]
     
@@ -258,63 +259,65 @@ def main():
                 total_tokens = BASE_TOKENS * multiplier
                 
                 for dist_name, dist_func in distributions.items():
-                    print(f"\n  M_total={total_tokens}, Distribution={dist_name}")
-                    
-                    try:
-                        # Generate distribution
-                        distribution = dist_func(total_tokens, NUM_EXPERTS)
+
+                    for swizzle_size in [1, 2, 4, 8]:
+                        print(f"\n  M_total={total_tokens}, Distribution={dist_name}")
                         
-                        # Validate
-                        assert sum(distribution) == total_tokens
-                        assert len(distribution) == NUM_EXPERTS
-                        
-                        # Stats
-                        min_m = min(distribution)
-                        max_m = max(distribution)
-                        avg_m = sum(distribution) / len(distribution)
-                        print(f"    Token dist: min={min_m}, max={max_m}, avg={avg_m:.0f}")
-                        
-                        # Write problem sizes
-                        problem_file = os.path.join(
-                            results_dir, 
-                            f"problems_{dtype_name}_n{n}k{k}_m{total_tokens}_{dist_name}.txt"
-                        )
-                        write_problem_sizes(distribution, n, k, problem_file)
-                        
-                        # Run profiler
-                        output_csv = os.path.join(
-                            results_dir,
-                            f"results_{dtype_name}_n{n}k{k}_m{total_tokens}_{dist_name}.csv"
-                        )
-                        
-                        if run_profiler(problem_file, output_csv, dtype_config['kernels']):
-                        # if True:
-                            # Get best kernel
-                            kernel_name, gflops = get_best_kernel(output_csv)
-                            if kernel_name and gflops:
-                                print(f"    Best: {gflops:.0f} GFLOPS")
-                                
-                                # Store result
-                                all_results.append({
-                                    'dtype': dtype_config['short_name'],
-                                    'n': n,
-                                    'k': k,
-                                    'tokens': total_tokens,
-                                    'dist': dist_name,
-                                    'min_m': min_m,
-                                    'max_m': max_m,
-                                    'avg_m': avg_m,
-                                    'gflops': gflops,
-                                    'kernel': kernel_name
-                                })
-                            else:
-                                print(f"    Failed to get performance")
-                        else:
-                            print(f"    Profiler failed")
+                        try:
+                            # Generate distribution
+                            distribution = dist_func(total_tokens, NUM_EXPERTS)
                             
-                    except Exception as e:
-                        print(f"    Error: {e}")
-                        continue
+                            # Validate
+                            assert sum(distribution) == total_tokens
+                            assert len(distribution) == NUM_EXPERTS
+                            
+                            # Stats
+                            min_m = min(distribution)
+                            max_m = max(distribution)
+                            avg_m = sum(distribution) / len(distribution)
+                            print(f"    Token dist: min={min_m}, max={max_m}, avg={avg_m:.0f}")
+                            
+                            # Write problem sizes
+                            problem_file = os.path.join(
+                                results_dir, 
+                                f"problems_{dtype_name}_n{n}k{k}_m{total_tokens}_{dist_name}.txt"
+                            )
+                            write_problem_sizes(distribution, n, k, problem_file)
+                            
+                            # Run profiler
+                            output_csv = os.path.join(
+                                results_dir,
+                                f"results_{dtype_name}_n{n}k{k}_m{total_tokens}_{dist_name}_swizzle={swizzle_size}.csv"
+                            )
+                            
+                            if run_profiler(problem_file, output_csv, dtype_config['kernels'], swizzle_size=swizzle_size):
+                            # if True:
+                                # Get best kernel
+                                kernel_name, gflops = get_best_kernel(output_csv)
+                                if kernel_name and gflops:
+                                    print(f"    Best: {gflops:.0f} GFLOPS")
+                                    
+                                    # Store result
+                                    all_results.append({
+                                        'dtype': dtype_config['short_name'],
+                                        'n': n,
+                                        'k': k,
+                                        'tokens': total_tokens,
+                                        'dist': dist_name,
+                                        'min_m': min_m,
+                                        'max_m': max_m,
+                                        'avg_m': avg_m,
+                                        'gflops': gflops,
+                                        'kernel': kernel_name
+                                    })
+                                else:
+                                    print(f"    Failed to get performance")
+                            else:
+                                print(f"    Profiler failed")
+                                
+                        except Exception as e:
+                            print(f"    Error: {e}")
+                            continue
     
     # Print summary table
     print("\n" + "=" * 80)
