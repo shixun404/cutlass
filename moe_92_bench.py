@@ -99,7 +99,8 @@ def run_profiler(problem_file: str, output_csv: str, kernels: str, swizzle_size=
     ]
     
     print(f"    Running profiler...")
-    
+    print(" ".join(cmd))
+    # assert 0
     try:
         result = subprocess.run(cmd, capture_output=True, text=True)
         # Check for actual output file (profiler adds .grouped_gemm.csv)
@@ -171,7 +172,7 @@ def main():
     # M13
     NUM_EXPERTS = 96
     BASE_TOKENS = 32768
-    MULTIPLIERS = [1]
+    MULTIPLIERS = [1, 2, 4, 8, 16]
     # NUM_EXPERTS = 256
     # BASE_TOKENS = NUM_EXPERTS
     # MULTIPLIERS = [1, 2, 4, 8, 16]
@@ -215,15 +216,16 @@ def main():
         #     'short_name': 'FP8-E4M3'
         # },
         'bf16': {
-            'kernels': 'cutlass3x_sm100_tensorop_moe_gemm_bf16_bf16*f32_bf16*',
+            # 'kernels': "cutlass3x_sm100_tensorop_moe_gemm_bf16_bf16*",
+            'kernels': "*",
             'short_name': 'BF16'
         }
     }
     
     # Distribution types
     distributions = {
-        # 'uniform': generate_uniform_distribution,
-        'imbalanced': generate_imbalanced_distribution,
+        'uniform': generate_uniform_distribution,
+        # 'imbalanced': generate_imbalanced_distribution,
     }
     
     # Random seed for reproducibility
@@ -239,7 +241,7 @@ def main():
     print(f"Distributions: {list(distributions.keys())}")
     print("=" * 80)
     
-    results_dir = f"profile_result/moe_profiling_example92_exp={NUM_EXPERTS}_tk={BASE_TOKENS}_results"
+    results_dir = f"profile_result/moe_profiling_example92_exp={NUM_EXPERTS}_tk={BASE_TOKENS}_swizzle_results"
     os.makedirs(results_dir, exist_ok=True)
     
     # Collect all results for summary
@@ -308,6 +310,7 @@ def main():
                                         'max_m': max_m,
                                         'avg_m': avg_m,
                                         'gflops': gflops,
+                                        'swizzle': swizzle_size,
                                         'kernel': kernel_name
                                     })
                                 else:
@@ -340,10 +343,10 @@ def main():
                   f"{r['min_m']:<6} {r['max_m']:<6} {r['gflops']:<10.0f}")
     
     # Save summary to CSV
-    summary_file = os.path.join(results_dir, "summary_mixed.csv")
+    summary_file = os.path.join(results_dir, "summary_mixed_swizzle.csv")
     if all_results:
         with open(summary_file, 'w', newline='') as f:
-            fieldnames = ['dtype', 'n', 'k', 'tokens', 'dist', 'min_m', 'max_m', 'avg_m', 'gflops', 'kernel']
+            fieldnames = ['dtype', 'n', 'k', 'tokens', 'dist', 'min_m', 'max_m', 'avg_m', 'swizzle', 'gflops', 'kernel']
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(all_results)

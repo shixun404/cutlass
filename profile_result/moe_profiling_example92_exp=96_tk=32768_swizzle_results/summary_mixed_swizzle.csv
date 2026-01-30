@@ -1,0 +1,5 @@
+dtype,n,k,tokens,dist,min_m,max_m,avg_m,swizzle,gflops,kernel
+BF16,3072,5120,32768,uniform,341,342,341.3333333333333,1,1206390.0,cutlass3x_sm100_tensorop_moe_gemm_bf16_bf16_f32_f32_bf16_128x128x64_1x1x1_0_tnn_align8_stream_k_mixed_cpasync_1sm
+BF16,3072,5120,32768,uniform,341,342,341.3333333333333,2,1213710.0,cutlass3x_sm100_tensorop_moe_gemm_bf16_bf16_f32_f32_bf16_128x128x64_1x1x1_0_tnn_align8_stream_k_mixed_cpasync_1sm
+BF16,3072,5120,32768,uniform,341,342,341.3333333333333,4,1205430.0,cutlass3x_sm100_tensorop_moe_gemm_bf16_bf16_f32_f32_bf16_128x128x64_1x1x1_0_tnn_align8_mixed_cpasync_1sm
+BF16,3072,5120,32768,uniform,341,342,341.3333333333333,8,1205910.0,cutlass3x_sm100_tensorop_moe_gemm_bf16_bf16_f32_f32_bf16_128x128x64_1x1x1_0_tnn_align8_stream_k_mixed_cpasync_1sm
