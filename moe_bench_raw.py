@@ -574,7 +574,24 @@ def main():
                         if combo_results:
                             # Sort by gflops descending and take the best one
                             best_result = max(combo_results, key=lambda x: x.get('gflops', 0.0))
-                            all_results.append(best_result)
+                            
+                            # Create a summary entry with only the fields needed for CSV
+                            summary_entry = {
+                                'dtype': best_result['dtype'],
+                                'n': best_result['n'],
+                                'k': best_result['k'],
+                                'tokens': best_result['tokens'],
+                                'dist': best_result['dist'],
+                                'config': best_result['config'],
+                                'cluster_m': best_result['cluster_m'],
+                                'cluster_n': best_result['cluster_n'],
+                                'raster': best_result['raster'],
+                                'max_sm': best_result['max_sm'],
+                                'use_pdl': best_result['use_pdl'],
+                                'tflops': best_result['tflops'],
+                            }
+                            all_results.append(summary_entry)
+                            
                             print(f"    Best config: cluster=({best_result['cluster_m']},{best_result['cluster_n']}), "
                                   f"raster={best_result['raster']}, max_sm={best_result['max_sm']}, "
                                   f"use_pdl={best_result['use_pdl']}, config={best_result['config']}, "
