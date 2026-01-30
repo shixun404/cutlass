@@ -211,7 +211,7 @@ def main():
     }
     
     # Random seed for reproducibility
-    results_dir = f"profile_result/gb200_grouped_gemm_results_swizzle"
+    results_dir = f"profile_result/gb200_grouped_gemm_results_swizzle_2"
     os.makedirs(results_dir, exist_ok=True)
     
     # Collect all results for summary
@@ -246,7 +246,7 @@ def main():
                     
                     for dist_name, dist_func in distributions.items():
                         print(f"\n  M_total={total_tokens}, Distribution={dist_name}")
-                        for swizzle_size in [8]:
+                        for swizzle_size in [2]:
                             
                             try:
                                 # Generate distribution
