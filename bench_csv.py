@@ -51,6 +51,11 @@ def to_gflops(m, n, k, l, us):
 # ─── Subprocess helper ─────────────────────────────────────────────────────────
 def _run(cmd, timeout=600):
     env = os.environ.copy()
+    # Propagate current sys.path so subprocesses can find 'cutlass' installed
+    # in the same venv/conda env as this script (fixes ModuleNotFoundError).
+    extra = os.pathsep.join(p for p in sys.path if p)
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (extra + os.pathsep + existing) if existing else extra
     result = subprocess.run(
         cmd, capture_output=True, text=True,
         timeout=timeout, cwd=str(REPO_ROOT), env=env,
@@ -145,8 +150,13 @@ def bench_dense_gemm(m, n, k, l, warmup, iters, skip_ref, tune, dry_run):
 
 def _fp8_timing_script(m, n, k, l, warmup, iters):
     """Generate a self-contained FP8 timing script (CUDA event based)."""
+    # Embed parent sys.path so the temp script finds 'cutlass' in the same env
+    parent_path = repr(list(sys.path))
     return textwrap.dedent(f"""\
         import sys
+        for _p in {parent_path}:
+            if _p and _p not in sys.path:
+                sys.path.insert(0, _p)
         sys.path.insert(0, r'{BLACKWELL_DIR}')
         import cutlass, torch
         import cutlass.cute as cute
