@@ -68,9 +68,9 @@ def _parse_us(stdout):
     return float(m.group(1)) if m else None
 
 def _parse_sec(stdout):
-    """'Execution time: X seconds' → float µs."""
+    """pipeline prints µs with a wrong 'seconds' label → return float µs as-is."""
     m = re.search(r"Execution time:\s*([0-9.e+\-]+)\s*seconds", stdout)
-    return float(m.group(1)) * 1e6 if m else None
+    return float(m.group(1)) if m else None  # value is already µs despite the label
 
 def _parse_fp8_us(stdout):
     """'exec_time_us=X' from inline fp8 timer → float µs."""
@@ -101,8 +101,13 @@ def _subprocess_run(script, extra_args, parse_fn, timeout=600):
     rc, out, err = _run(cmd, timeout)
     us = parse_fn(out)
     if us is None or rc != 0:
-        last = ((err or out) or "").strip().splitlines()
-        return None, (last[-1] if last else f"rc={rc}")
+        lines = ((err or out) or "").strip().splitlines()
+        msg = lines[-1] if lines else f"rc={rc}"
+        # Print full error to stderr for debugging
+        print(f"\n[ERROR] {script}: {msg}", file=sys.stderr)
+        if len(lines) > 1:
+            print("\n".join(f"  {l}" for l in lines[-5:]), file=sys.stderr)
+        return None, msg
     return us, None
 
 
@@ -433,7 +438,7 @@ def main():
 
     def fmt(val, err):
         if val is not None: return c(f"{val:>10.1f}", GREEN) + "        "
-        short = (err or "")[:18]
+        short = (err or "")[:30]
         return c(f"{'N/A':>10}", YELLOW) + f" [{short}]"
 
     total = fail = 0
