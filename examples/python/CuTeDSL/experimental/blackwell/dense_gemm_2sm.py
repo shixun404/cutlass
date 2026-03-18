@@ -10,8 +10,16 @@
 
 """
 2SM Dense GEMM example using cute_ext decorators.
+
+Supports batched / group-GEMM via the L dimension in --mnkl (M,N,K,L).
+For L > 1, the kernel is invoked once per batch element sequentially.
+
+Tile constraints (hardware):
+  2-CTA mode: M must be divisible by 256, N by 256, K by 64
+  1-CTA mode: M must be divisible by 128, N by 256, K by 64
 """
 
+import argparse
 import torch
 import math
 import cutlass
@@ -21,7 +29,7 @@ from cutlass.cute.runtime import from_dlpack
 import cutlass.utils.blackwell_helpers as sm100_utils
 import cutlass.utils as utils
 from cutlass.base_dsl.typing import Numeric
-from typing import Type
+from typing import Tuple, Type
 
 
 def create_gemm_tensors_torch(
@@ -480,40 +488,215 @@ def sm100_4x4x1_kernel_builder(
     return launch_kernel
 
 
-if __name__ == "__main__":
-    M = 256
-    N = 256
-    K = 64
-    use_tma_multicast = True
-    use_2cta_instrs = True
-    acc_dtype = cutlass.Float32
+# ── dtype helpers ──────────────────────────────────────────────────────────────
 
-    majors = (
-        cute.nvgpu.tcgen05.OperandMajorMode.K,
-        cute.nvgpu.tcgen05.OperandMajorMode.K,
-        cute.nvgpu.tcgen05.OperandMajorMode.K,
+_CUTLASS_TO_TORCH = {
+    cutlass.Float16:  torch.float16,
+    cutlass.BFloat16: torch.bfloat16,
+    cutlass.Float32:  torch.float32,
+    cutlass.TFloat32: torch.float32,
+}
+
+
+def _to_torch_dtype(dtype):
+    if dtype not in _CUTLASS_TO_TORCH:
+        raise ValueError(f"2SM kernel: unsupported dtype {dtype}")
+    return _CUTLASS_TO_TORCH[dtype]
+
+
+def _to_major_mode(major_str, operand):
+    """Map CLI major string to OperandMajorMode.
+
+    Conventions (matching dense_gemm.py / dense_gemm_ptr_array.py):
+      A: "k" → K-major (row-major),  "m" → MN-major (col-major)
+      B: "k" → K-major (row-major),  "n" → MN-major (col-major)
+      D: "n" → K-major  (row-major), "m" → MN-major (col-major)
+    """
+    K_mode  = cute.nvgpu.tcgen05.OperandMajorMode.K
+    MN_mode = cute.nvgpu.tcgen05.OperandMajorMode.MN
+    if operand in ("A", "B"):
+        return K_mode if major_str == "k" else MN_mode
+    else:  # D
+        return K_mode if major_str == "n" else MN_mode
+
+
+# ── run() ──────────────────────────────────────────────────────────────────────
+
+def run(
+    mnkl: Tuple[int, int, int, int],
+    ab_dtype: Type[Numeric] = cutlass.Float16,
+    d_dtype: Type[Numeric] = cutlass.Float16,
+    acc_dtype: Type[Numeric] = cutlass.Float32,
+    a_major: str = "k",
+    b_major: str = "k",
+    d_major: str = "n",
+    use_tma_multicast: bool = True,
+    use_2cta_instrs: bool = True,
+    warmup_iterations: int = 0,
+    iterations: int = 1,
+    skip_ref_check: bool = False,
+    **kwargs,
+) -> float:
+    """Execute a (batched / group) 2SM dense GEMM on Blackwell with benchmarking.
+
+    For L > 1 the kernel is invoked L times per timed iteration, once per
+    batch element (group-GEMM semantics: each group has shape M×N×K).
+
+    :param mnkl: Problem size (M, N, K, L).  L is the batch/group count.
+    :param ab_dtype: Data type for A and B (Float16, BFloat16, …).
+    :param d_dtype:  Data type for output D.
+    :param acc_dtype: Accumulator type (Float32 recommended).
+    :param a_major: 'k' = K-major (row-major), 'm' = M-major (col-major).
+    :param b_major: 'k' = K-major (row-major), 'n' = N-major (col-major).
+    :param d_major: 'n' = N-major (row-major), 'm' = M-major (col-major).
+    :param use_tma_multicast: Enable TMA multicast across cluster CTAs.
+    :param use_2cta_instrs: Use m256n256k16 2-CTA MMA (False → m128n256k16 1-CTA).
+    :param warmup_iterations: Warmup runs before timing.
+    :param iterations: Timed iterations.
+    :param skip_ref_check: Skip torch.mm reference validation.
+    :returns: Execution time in **microseconds** per iteration.
+    """
+    M, N, K, L = mnkl
+
+    # ── constraint check ──────────────────────────────────────────────────────
+    m_align = 256 if use_2cta_instrs else 128
+    if M % m_align != 0:
+        raise ValueError(
+            f"M={M} must be divisible by {m_align} "
+            f"({'2-CTA' if use_2cta_instrs else '1-CTA'} tile constraint)"
+        )
+    if N % 256 != 0:
+        raise ValueError(f"N={N} must be divisible by 256 (N-tile = 256)")
+    if K % 64 != 0:
+        raise ValueError(f"K={K} must be divisible by 64 (K-tile = 64)")
+
+    torch_ab = _to_torch_dtype(ab_dtype)
+    torch_d  = _to_torch_dtype(d_dtype)
+    majors   = (
+        _to_major_mode(a_major, "A"),
+        _to_major_mode(b_major, "B"),
+        _to_major_mode(d_major, "D"),
     )
-    dtypes = (torch.float16, torch.float16, torch.float16)
+    dtypes = (torch_ab, torch_ab, torch_d)
 
-    A_torch, B_torch, D_torch, A_cute, B_cute, D_cute = get_gemm_tensors(
-        M, N, K, majors, dtypes
-    )
+    print(f"Running 2SM Dense GEMM on Blackwell:")
+    print(f"  mnkl={mnkl}, 2cta={use_2cta_instrs}, tma_mcast={use_tma_multicast}")
+    print(f"  ab_dtype={ab_dtype}, d_dtype={d_dtype}, acc_dtype={acc_dtype}")
+    print(f"  majors: A={a_major}, B={b_major}, D={d_major}")
 
+    # ── create L batches of tensors ───────────────────────────────────────────
+    torch.manual_seed(42)
+    batches = []
+    for _ in range(L):
+        A_t, B_t, D_t, A_c, B_c, D_c = get_gemm_tensors(M, N, K, majors, dtypes)
+        batches.append((A_t, B_t, D_t, A_c, B_c, D_c))
+
+    # ── compile kernel (once, using first batch for shape inference) ──────────
     kernel_launcher = sm100_4x4x1_kernel_builder(
         use_tma_multicast, use_2cta_instrs, acc_dtype, M, N
     )
+    A0_c, B0_c, D0_c = batches[0][3], batches[0][4], batches[0][5]
+    compiled_kernel = cute_ext.compile(kernel_launcher, A0_c, B0_c, D0_c)
 
-    compiled_kernel = cute_ext.compile(kernel_launcher, A_cute, B_cute, D_cute)
+    def _run_all():
+        for _, _, _, A_c, B_c, D_c in batches:
+            compiled_kernel(A_c, B_c, D_c)
 
-    compiled_kernel(A_cute, B_cute, D_cute)
+    # ── warmup ────────────────────────────────────────────────────────────────
+    for _ in range(warmup_iterations):
+        _run_all()
 
-    # Reference check (may fail on simulator/unsupported GPU)
-    try:
-        ref = torch.mm(A_torch.float(), B_torch.float().T)
-        torch.testing.assert_close(D_torch.float(), ref, atol=1e-2, rtol=1e-2)
-        print("PASS")
-    except RuntimeError as e:
-        if "no kernel image is available" in str(e):
-            print("SKIP: Reference check skipped - GPU not supported by PyTorch")
-        else:
-            raise
+    # ── CUDA event timing ─────────────────────────────────────────────────────
+    torch.cuda.synchronize()
+    ev_start = torch.cuda.Event(enable_timing=True)
+    ev_end   = torch.cuda.Event(enable_timing=True)
+    ev_start.record()
+    for _ in range(iterations):
+        _run_all()
+    ev_end.record()
+    torch.cuda.synchronize()
+    exec_time_us = ev_start.elapsed_time(ev_end) / iterations * 1000.0
+
+    # ── reference check (first batch only) ───────────────────────────────────
+    if not skip_ref_check:
+        A_t, B_t, D_t = batches[0][0], batches[0][1], batches[0][2]
+        try:
+            ref = torch.mm(A_t.float(), B_t.float().T)
+            torch.testing.assert_close(D_t.float(), ref, atol=1e-2, rtol=1e-2)
+            print("PASS")
+        except RuntimeError as e:
+            if "no kernel image is available" in str(e):
+                print("SKIP: Reference check skipped - GPU not supported by PyTorch")
+            else:
+                raise
+
+    return exec_time_us
+
+
+# ── CLI ────────────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+
+    def _parse_ints(s):
+        try:
+            return tuple(int(x.strip()) for x in s.split(","))
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                "Invalid format. Expected comma-separated integers."
+            )
+
+    parser = argparse.ArgumentParser(
+        description="2SM Dense GEMM on Blackwell (SM100).",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--mnkl",
+        type=_parse_ints,
+        default=(256, 256, 64, 1),
+        help="Problem size M,N,K,L (default: 256,256,64,1).  L>1 = group-GEMM.",
+    )
+    parser.add_argument("--ab_dtype",  type=cutlass.dtype, default=cutlass.Float16)
+    parser.add_argument("--d_dtype",   type=cutlass.dtype, default=cutlass.Float16)
+    parser.add_argument("--acc_dtype", type=cutlass.dtype, default=cutlass.Float32)
+    parser.add_argument("--a_major", choices=["k", "m"], default="k")
+    parser.add_argument("--b_major", choices=["k", "n"], default="k")
+    parser.add_argument("--d_major", choices=["n", "m"], default="n")
+
+    # Boolean flags with explicit enable/disable
+    tma_grp = parser.add_mutually_exclusive_group()
+    tma_grp.add_argument("--use_tma_multicast",
+                         dest="use_tma_multicast", action="store_true")
+    tma_grp.add_argument("--no_tma_multicast",
+                         dest="use_tma_multicast", action="store_false")
+    parser.set_defaults(use_tma_multicast=True)
+
+    cta_grp = parser.add_mutually_exclusive_group()
+    cta_grp.add_argument("--use_2cta_instrs",
+                         dest="use_2cta_instrs", action="store_true")
+    cta_grp.add_argument("--no_2cta_instrs",
+                         dest="use_2cta_instrs", action="store_false")
+    parser.set_defaults(use_2cta_instrs=True)
+
+    parser.add_argument("--warmup_iterations", type=int, default=0)
+    parser.add_argument("--iterations",        type=int, default=1)
+    parser.add_argument("--skip_ref_check",    action="store_true")
+
+    args = parser.parse_args()
+    if len(args.mnkl) != 4:
+        parser.error("--mnkl must have exactly 4 values: M,N,K,L")
+
+    exec_time_us = run(
+        args.mnkl,
+        args.ab_dtype,
+        args.d_dtype,
+        args.acc_dtype,
+        args.a_major,
+        args.b_major,
+        args.d_major,
+        args.use_tma_multicast,
+        args.use_2cta_instrs,
+        args.warmup_iterations,
+        args.iterations,
+        args.skip_ref_check,
+    )
+    print(f"Execution time: {exec_time_us} microseconds per iteration")
