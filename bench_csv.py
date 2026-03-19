@@ -5,22 +5,34 @@ Benchmark runner for CuTeDSL Blackwell (SM100/GB200) kernels.
 Reads benchmark.csv, runs every (type, M, N, K, group) shape through all
 relevant experimental/blackwell kernels, and writes GFLOPS results back.
 
-Kernel coverage:
-  gemm / groupgemm  fp8   → dense_block_scaled_gemm  (Float8E4M3FN + E8M0 scale)
-  gemm / groupgemm  bf16  → dense_gemm                (BFloat16, 1-CTA)
-  gemm / groupgemm  bf16  → dense_gemm_cute_pipeline  (BFloat16, 1-CTA or 2-CTA)
-  gemm / groupgemm  bf16  → dense_gemm_ptr_array       (BFloat16, ptr-array batched)
-  gemm / groupgemm  bf16  → dense_gemm_2sm             (BFloat16, 2-SM cluster)
+Kernel / dtype coverage:
+  fp8_e4m3          → dense_block_scaled_gemm  (Float8E4M3FN + E8M0 scale)
+  fp8_e5m2          → dense_block_scaled_gemm  (Float8E5M2   + E8M0 scale)
+  dense_gemm_bf16   → dense_gemm               (BFloat16, 1-CTA)
+  dense_gemm_fp16   → dense_gemm               (Float16,  1-CTA)
+  pipeline_1cta_bf16→ dense_gemm_cute_pipeline (BFloat16, 1-CTA)
+  pipeline_1cta_fp16→ dense_gemm_cute_pipeline (Float16,  1-CTA)
+  pipeline_2cta_bf16→ dense_gemm_cute_pipeline (BFloat16, 2-CTA, tile 256×256)
+  pipeline_2cta_fp16→ dense_gemm_cute_pipeline (Float16,  2-CTA, tile 256×256)
+  ptr_array_bf16    → dense_gemm_ptr_array      (BFloat16, ptr-array batched)
+  ptr_array_fp16    → dense_gemm_ptr_array      (Float16,  ptr-array batched)
+  2sm_bf16          → dense_gemm_2sm            (BFloat16, 2-SM cluster)
+  2sm_fp16          → dense_gemm_2sm            (Float16,  2-SM cluster)
+
+MFU reference (B200 dense, no sparsity):
+  FP8  Tensor Core: ~4,500 TFLOPS
+  BF16/FP16 Tensor Core: ~2,250 TFLOPS
 
 Tile tuning:
   Before benchmarking each (kernel, M, N, K) the script sweeps candidate
   mma_tiler_mn values and picks the fastest one (--tune / --no_tune).
 
 Usage:
-  python bench_csv.py                         # full run, tuning ON
-  python bench_csv.py --no_tune               # skip tuning, use default tile
-  python bench_csv.py --warmup 3 --iters 10  # custom iteration counts
-  python bench_csv.py --dry_run              # print commands without executing
+  python bench_csv.py                          # full run, tuning ON
+  python bench_csv.py --no_tune                # skip tuning, use tile (128,128)
+  python bench_csv.py --warmup 3 --iters 10   # custom iteration counts
+  python bench_csv.py --dry_run               # print commands without executing
+  python bench_csv.py --kernel fp8 dense_gemm # run only these kernel groups
 """
 
 import argparse
@@ -38,12 +50,18 @@ REPO_ROOT     = Path(__file__).parent.resolve()
 BLACKWELL_DIR = REPO_ROOT / "examples/python/CuTeDSL/experimental/blackwell"
 DEFAULT_CSV   = REPO_ROOT / "benchmark.csv"
 
+# ─── B200 peak GFLOPS (dense, no sparsity) ────────────────────────────────────
+PEAK_GFLOPS = {
+    "fp8":  4_500_000,   # FP8 Tensor Core
+    "fp16": 2_250_000,   # FP16 / BF16 Tensor Core
+}
+
 # ─── ANSI ─────────────────────────────────────────────────────────────────────
 RESET = "\033[0m"; GREEN = "\033[92m"; RED = "\033[91m"
 YELLOW = "\033[93m"; CYAN = "\033[96m"; BOLD = "\033[1m"
 def c(t, col): return f"{col}{t}{RESET}"
 
-# ─── GFLOPS ───────────────────────────────────────────────────────────────────
+# ─── GFLOPS / MFU ─────────────────────────────────────────────────────────────
 def to_gflops(m, n, k, l, us):
     """2*M*N*K*L FLOPs, latency in µs → GFLOPS."""
     return 2.0 * m * n * k * l / (us * 1e-6) / 1e9
@@ -51,8 +69,6 @@ def to_gflops(m, n, k, l, us):
 # ─── Subprocess helper ─────────────────────────────────────────────────────────
 def _run(cmd, timeout=600):
     env = os.environ.copy()
-    # Propagate current sys.path so subprocesses can find 'cutlass' installed
-    # in the same venv/conda env as this script (fixes ModuleNotFoundError).
     extra = os.pathsep.join(p for p in sys.path if p)
     existing = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = (extra + os.pathsep + existing) if existing else extra
@@ -68,9 +84,9 @@ def _parse_us(stdout):
     return float(m.group(1)) if m else None
 
 def _parse_sec(stdout):
-    """pipeline prints µs with a wrong 'seconds' label → return float µs as-is."""
+    """pipeline prints µs with a mislabeled 'seconds' unit → return value as-is (µs)."""
     m = re.search(r"Execution time:\s*([0-9.e+\-]+)\s*seconds", stdout)
-    return float(m.group(1)) if m else None  # value is already µs despite the label
+    return float(m.group(1)) if m else None   # value IS µs despite the label
 
 def _parse_fp8_us(stdout):
     """'exec_time_us=X' from inline fp8 timer → float µs."""
@@ -78,14 +94,12 @@ def _parse_fp8_us(stdout):
     return float(m.group(1)) if m else None
 
 # ─── Tuning helpers ───────────────────────────────────────────────────────────
-# Valid mma_tiler_mn candidates for 1-CTA kernels (M_tile ∈ {64,128,256}, N_tile ∈ {128,256})
-# Constraint: M_tile must be ≤ M, N_tile must be ≤ N, and both must divide evenly.
+# BF16/FP16 MMA (MmaF16BF16Op) requires M_tile ∈ {64, 128} — NOT 256.
+# Using M_tile=256 raises "expects the M-mode to be 64 or 128" at runtime.
+# (256 is only valid for 2-CTA SM100_MMA_2SM instructions.)
 _TILE_CANDIDATES_1CTA = [
     (128, 128), (128, 256),
-    (256, 128), (256, 256),
 ]
-# 2-CTA kernel (dense_gemm_2sm): tile is fixed by mma_inst — no tiler sweep needed.
-# dense_gemm_cute_pipeline with 2-CTA: tile is (256,256) fixed.
 
 
 def _valid_tiles(m, n, candidates):
@@ -103,7 +117,6 @@ def _subprocess_run(script, extra_args, parse_fn, timeout=600):
     if us is None or rc != 0:
         lines = ((err or out) or "").strip().splitlines()
         msg = lines[-1] if lines else f"rc={rc}"
-        # Print full error to stderr for debugging
         print(f"\n[ERROR] {script}: {msg}", file=sys.stderr)
         if len(lines) > 1:
             print("\n".join(f"  {l}" for l in lines[-5:]), file=sys.stderr)
@@ -111,51 +124,10 @@ def _subprocess_run(script, extra_args, parse_fn, timeout=600):
     return us, None
 
 
-# ── dense_gemm.py (BF16, 1-CTA) ────────────────────────────────────────────
+# ── dense_block_scaled_gemm.py (FP8 E4M3 or E5M2) ───────────────────────────
 
-def _dense_gemm_args(m, n, k, l, tile, warmup, iters, skip_ref):
-    tm, tn = tile
-    args = [
-        "--mnkl", f"{m},{n},{k},{l}",
-        "--mma_tiler_mn", f"{tm},{tn}",
-        "--cluster_shape_mn", "1,1",
-        "--ab_dtype", "BFloat16", "--d_dtype", "BFloat16", "--acc_dtype", "Float32",
-        "--warmup_iterations", str(warmup), "--iterations", str(iters),
-        "--use_cold_l2",
-    ]
-    if skip_ref: args.append("--skip_ref_check")
-    return args
-
-def bench_dense_gemm(m, n, k, l, warmup, iters, skip_ref, tune, dry_run):
-    if dry_run:
-        tile = _valid_tiles(m, n, _TILE_CANDIDATES_1CTA)[0] if _valid_tiles(m, n, _TILE_CANDIDATES_1CTA) else (128, 128)
-        return None, "DRY: " + " ".join(_dense_gemm_args(m, n, k, l, tile, warmup, iters, skip_ref))
-
-    tiles = _valid_tiles(m, n, _TILE_CANDIDATES_1CTA) if tune else [(128, 128)]
-    if not tiles:
-        return None, f"No valid tile for M={m}, N={n}"
-    best_us, best_tile = None, tiles[0]
-    for tile in tiles:
-        us, err = _subprocess_run("dense_gemm.py",
-                                  _dense_gemm_args(m, n, k, l, tile, 1, 3, True),
-                                  _parse_us)
-        if us is not None and (best_us is None or us < best_us):
-            best_us, best_tile = us, tile
-
-    if best_us is None:
-        return None, "all tiles failed in tune sweep"
-    us, err = _subprocess_run("dense_gemm.py",
-                              _dense_gemm_args(m, n, k, l, best_tile, warmup, iters, skip_ref),
-                              _parse_us)
-    if us is None: return None, err
-    return to_gflops(m, n, k, l, us), None
-
-
-# ── dense_block_scaled_gemm.py (FP8) ────────────────────────────────────────
-
-def _fp8_timing_script(m, n, k, l, warmup, iters):
-    """Generate a self-contained FP8 timing script (CUDA event based)."""
-    # Embed parent sys.path so the temp script finds 'cutlass' in the same env
+def _fp8_timing_script(m, n, k, l, warmup, iters, ab_dtype_str="Float8E4M3FN"):
+    """Generate a self-contained FP8 timing script using CUDA Events."""
     parent_path = repr(list(sys.path))
     return textwrap.dedent(f"""\
         import sys
@@ -168,8 +140,11 @@ def _fp8_timing_script(m, n, k, l, warmup, iters):
         from dense_block_scaled_gemm import BlockScaledGemmTestbed, BlockScaledDenseGemmKernel
 
         mnkl = ({m}, {n}, {k}, {l})
-        ab_dtype, sf_dtype, sf_vec_size = cutlass.Float8E4M3FN, cutlass.Float8E8M0FNU, 32
-        d_dtype, acc_dtype = cutlass.Float16, cutlass.Float32
+        ab_dtype   = cutlass.{ab_dtype_str}
+        sf_dtype   = cutlass.Float8E8M0FNU
+        sf_vec_size = 32
+        d_dtype    = cutlass.Float16
+        acc_dtype  = cutlass.Float32
         mma_inst_mn = (128, 128)
 
         torch.manual_seed(42)
@@ -194,18 +169,18 @@ def _fp8_timing_script(m, n, k, l, warmup, iters):
         print(f"exec_time_us={{ev_s.elapsed_time(ev_e) / {iters} * 1000:.4f}}")
     """)
 
-def bench_fp8(m, n, k, l, warmup, iters, dry_run):
+def bench_fp8(m, n, k, l, warmup, iters, dry_run, ab_dtype="Float8E4M3FN"):
     if m % 128 != 0:
-        return None, f"M={m} not divisible by 128 (mma_inst constraint)"
+        return None, f"M={m} not divisible by 128"
     if n % 128 != 0:
-        return None, f"N={n} not divisible by 128 (mma_inst constraint)"
+        return None, f"N={n} not divisible by 128"
     if k % 64 != 0:
-        return None, f"K={k} not divisible by 64 (sf_vec_size constraint)"
+        return None, f"K={k} not divisible by 64 (sf_vec_size×2)"
 
-    script_text = _fp8_timing_script(m, n, k, l, warmup, iters)
     if dry_run:
-        return None, "DRY: inline fp8 timing script"
+        return None, f"DRY: inline fp8 timing script ({ab_dtype})"
 
+    script_text = _fp8_timing_script(m, n, k, l, warmup, iters, ab_dtype)
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py",
                                      delete=False, dir=str(REPO_ROOT)) as f:
         f.write(script_text); tmp = f.name
@@ -221,16 +196,59 @@ def bench_fp8(m, n, k, l, warmup, iters, dry_run):
     return to_gflops(m, n, k, l, us), None
 
 
-# ── dense_gemm_cute_pipeline.py (BF16, 1-CTA or 2-CTA) ─────────────────────
+# ── dense_gemm.py (BF16 or FP16, 1-CTA) ─────────────────────────────────────
 
-def _pipeline_args(m, n, k, l, tile, cluster, use_2cta, warmup, iters, skip_ref):
+def _dense_gemm_args(m, n, k, l, tile, warmup, iters, skip_ref, ab_dtype="BFloat16"):
+    tm, tn = tile
+    args = [
+        "--mnkl", f"{m},{n},{k},{l}",
+        "--mma_tiler_mn", f"{tm},{tn}",
+        "--cluster_shape_mn", "1,1",
+        "--ab_dtype", ab_dtype, "--d_dtype", ab_dtype, "--acc_dtype", "Float32",
+        "--warmup_iterations", str(warmup), "--iterations", str(iters),
+        "--use_cold_l2",
+    ]
+    if skip_ref: args.append("--skip_ref_check")
+    return args
+
+def bench_dense_gemm(m, n, k, l, warmup, iters, skip_ref, tune, dry_run,
+                     ab_dtype="BFloat16"):
+    tiles = _valid_tiles(m, n, _TILE_CANDIDATES_1CTA) if tune else [(128, 128)]
+    if not tiles:
+        return None, f"No valid tile for M={m}, N={n}"
+    if dry_run:
+        return None, "DRY: " + " ".join(
+            _dense_gemm_args(m, n, k, l, tiles[0], warmup, iters, skip_ref, ab_dtype))
+
+    best_us, best_tile = None, tiles[0]
+    for tile in tiles:
+        us, _ = _subprocess_run("dense_gemm.py",
+                                _dense_gemm_args(m, n, k, l, tile, 1, 3, True, ab_dtype),
+                                _parse_us)
+        if us is not None and (best_us is None or us < best_us):
+            best_us, best_tile = us, tile
+
+    if best_us is None:
+        return None, "all tiles failed in tune sweep"
+    us, err = _subprocess_run("dense_gemm.py",
+                              _dense_gemm_args(m, n, k, l, best_tile, warmup, iters,
+                                               skip_ref, ab_dtype),
+                              _parse_us)
+    if us is None: return None, err
+    return to_gflops(m, n, k, l, us), None
+
+
+# ── dense_gemm_cute_pipeline.py (BF16 or FP16, 1-CTA or 2-CTA) ──────────────
+
+def _pipeline_args(m, n, k, l, tile, cluster, use_2cta, warmup, iters, skip_ref,
+                   ab_dtype="BFloat16"):
     tm, tn = tile
     cm, cn = cluster
     args = [
         "--mnkl", f"{m},{n},{k},{l}",
         "--mma_tiler_mn", f"{tm},{tn}",
         "--cluster_shape_mn", f"{cm},{cn}",
-        "--ab_dtype", "BFloat16", "--c_dtype", "BFloat16", "--acc_dtype", "Float32",
+        "--ab_dtype", ab_dtype, "--c_dtype", ab_dtype, "--acc_dtype", "Float32",
         "--warmup_iterations", str(warmup), "--iterations", str(iters),
         "--benchmark", "default", "--use_cold_l2",
     ]
@@ -238,33 +256,35 @@ def _pipeline_args(m, n, k, l, tile, cluster, use_2cta, warmup, iters, skip_ref)
     if skip_ref: args.append("--skip_ref_check")
     return args
 
-def bench_pipeline(m, n, k, l, use_2cta, warmup, iters, skip_ref, tune, dry_run):
-    # 2-CTA: tile must be (256,256), cluster (2,1)
+def bench_pipeline(m, n, k, l, use_2cta, warmup, iters, skip_ref, tune, dry_run,
+                   ab_dtype="BFloat16"):
     if use_2cta:
-        if m % 256 != 0: return None, f"M={m} not divisible by 256 (2-CTA tile)"
-        if n % 256 != 0: return None, f"N={n} not divisible by 256 (2-CTA tile)"
+        if m % 256 != 0: return None, f"M={m} not divisible by 256 (2-CTA)"
+        if n % 256 != 0: return None, f"N={n} not divisible by 256 (2-CTA)"
         tile, cluster = (256, 256), (2, 1)
         if dry_run:
             return None, "DRY: " + " ".join(
-                _pipeline_args(m, n, k, l, tile, cluster, True, warmup, iters, skip_ref))
+                _pipeline_args(m, n, k, l, tile, cluster, True, warmup, iters,
+                               skip_ref, ab_dtype))
         us, err = _subprocess_run("dense_gemm_cute_pipeline.py",
                                   _pipeline_args(m, n, k, l, tile, cluster,
-                                                 True, warmup, iters, skip_ref),
+                                                 True, warmup, iters, skip_ref, ab_dtype),
                                   _parse_sec)
         if us is None: return None, err
         return to_gflops(m, n, k, l, us), None
 
-    # 1-CTA: sweep tiles
     tiles = _valid_tiles(m, n, _TILE_CANDIDATES_1CTA) if tune else [(128, 128)]
     if not tiles: return None, f"No valid 1-CTA tile for M={m}, N={n}"
     if dry_run:
         return None, "DRY: " + " ".join(
-            _pipeline_args(m, n, k, l, tiles[0], (1, 1), False, warmup, iters, skip_ref))
+            _pipeline_args(m, n, k, l, tiles[0], (1, 1), False, warmup, iters,
+                           skip_ref, ab_dtype))
 
     best_us, best_tile = None, tiles[0]
     for tile in tiles:
         us, _ = _subprocess_run("dense_gemm_cute_pipeline.py",
-                                _pipeline_args(m, n, k, l, tile, (1, 1), False, 1, 3, True),
+                                _pipeline_args(m, n, k, l, tile, (1, 1),
+                                               False, 1, 3, True, ab_dtype),
                                 _parse_sec)
         if us is not None and (best_us is None or us < best_us):
             best_us, best_tile = us, tile
@@ -272,56 +292,60 @@ def bench_pipeline(m, n, k, l, use_2cta, warmup, iters, skip_ref, tune, dry_run)
 
     us, err = _subprocess_run("dense_gemm_cute_pipeline.py",
                               _pipeline_args(m, n, k, l, best_tile, (1, 1),
-                                             False, warmup, iters, skip_ref),
+                                             False, warmup, iters, skip_ref, ab_dtype),
                               _parse_sec)
     if us is None: return None, err
     return to_gflops(m, n, k, l, us), None
 
 
-# ── dense_gemm_ptr_array.py (BF16, ptr-array batched) ───────────────────────
+# ── dense_gemm_ptr_array.py (BF16 or FP16, ptr-array batched) ────────────────
 
-def _ptr_array_args(m, n, k, l, tile, warmup, iters, skip_ref):
+def _ptr_array_args(m, n, k, l, tile, warmup, iters, skip_ref, ab_dtype="BFloat16"):
     tm, tn = tile
     args = [
         "--mnkl", f"{m},{n},{k},{l}",
         "--mma_tiler_mn", f"{tm},{tn}",
         "--cluster_shape_mn", "1,1",
-        "--ab_dtype", "BFloat16", "--d_dtype", "BFloat16", "--acc_dtype", "Float32",
+        "--ab_dtype", ab_dtype, "--d_dtype", ab_dtype, "--acc_dtype", "Float32",
         "--warmup_iterations", str(warmup), "--iterations", str(iters),
         "--use_cold_l2",
     ]
     if skip_ref: args.append("--skip_ref_check")
     return args
 
-def bench_ptr_array(m, n, k, l, warmup, iters, skip_ref, tune, dry_run):
+def bench_ptr_array(m, n, k, l, warmup, iters, skip_ref, tune, dry_run,
+                    ab_dtype="BFloat16"):
     tiles = _valid_tiles(m, n, _TILE_CANDIDATES_1CTA) if tune else [(128, 128)]
     if not tiles: return None, f"No valid tile for M={m}, N={n}"
     if dry_run:
         return None, "DRY: " + " ".join(
-            _ptr_array_args(m, n, k, l, tiles[0], warmup, iters, skip_ref))
+            _ptr_array_args(m, n, k, l, tiles[0], warmup, iters, skip_ref, ab_dtype))
 
     best_us, best_tile = None, tiles[0]
     for tile in tiles:
         us, _ = _subprocess_run("dense_gemm_ptr_array.py",
-                                _ptr_array_args(m, n, k, l, tile, 1, 3, True),
+                                _ptr_array_args(m, n, k, l, tile, 1, 3, True, ab_dtype),
                                 _parse_us)
         if us is not None and (best_us is None or us < best_us):
             best_us, best_tile = us, tile
     if best_us is None: return None, "all tiles failed in tune sweep"
 
     us, err = _subprocess_run("dense_gemm_ptr_array.py",
-                              _ptr_array_args(m, n, k, l, best_tile, warmup, iters, skip_ref),
+                              _ptr_array_args(m, n, k, l, best_tile, warmup, iters,
+                                              skip_ref, ab_dtype),
                               _parse_us)
     if us is None: return None, err
     return to_gflops(m, n, k, l, us), None
 
 
-# ── dense_gemm_2sm.py (BF16, 2-SM cluster) ──────────────────────────────────
+# ── dense_gemm_2sm.py (BF16 or FP16, 2-SM cluster) ───────────────────────────
+# NOTE: known kernel bug for K > 256 (pipeline deadlock on peer CTA).
+# All benchmark shapes have K ≥ 2048 so this will return N/A.
 
-def _2sm_args(m, n, k, l, use_2cta, warmup, iters, skip_ref):
+def _2sm_args(m, n, k, l, use_2cta, warmup, iters, skip_ref, ab_dtype="BFloat16"):
     args = [
         "--mnkl", f"{m},{n},{k},{l}",
-        "--ab_dtype", "BFloat16", "--d_dtype", "BFloat16", "--acc_dtype", "Float32",
+        "--ab_dtype", ab_dtype, "--d_dtype", ab_dtype, "--acc_dtype", "Float32",
         "--warmup_iterations", str(warmup), "--iterations", str(iters),
     ]
     if use_2cta: args.append("--use_2cta_instrs")
@@ -329,20 +353,20 @@ def _2sm_args(m, n, k, l, use_2cta, warmup, iters, skip_ref):
     if skip_ref: args.append("--skip_ref_check")
     return args
 
-def bench_2sm(m, n, k, l, warmup, iters, skip_ref, dry_run):
-    # Prefer 2-CTA (higher throughput); fall back to 1-CTA if M not ÷256
+def bench_2sm(m, n, k, l, warmup, iters, skip_ref, dry_run, ab_dtype="BFloat16"):
     use_2cta = (m % 256 == 0 and n % 256 == 0 and k % 64 == 0)
     use_1cta = (m % 128 == 0 and n % 256 == 0 and k % 64 == 0)
     if not use_2cta and not use_1cta:
-        return None, f"M={m} or N={n} or K={k} violates 2SM tile alignment"
+        return None, f"M={m}/N={n}/K={k} violates 2SM alignment"
 
-    chosen_2cta = use_2cta  # prefer 2-CTA
+    chosen_2cta = use_2cta
     if dry_run:
         return None, "DRY: " + " ".join(
-            _2sm_args(m, n, k, l, chosen_2cta, warmup, iters, skip_ref))
+            _2sm_args(m, n, k, l, chosen_2cta, warmup, iters, skip_ref, ab_dtype))
 
     us, err = _subprocess_run("dense_gemm_2sm.py",
-                              _2sm_args(m, n, k, l, chosen_2cta, warmup, iters, skip_ref),
+                              _2sm_args(m, n, k, l, chosen_2cta, warmup, iters,
+                                        skip_ref, ab_dtype),
                               _parse_us)
     if us is None: return None, err
     return to_gflops(m, n, k, l, us), None
@@ -370,36 +394,100 @@ def ensure_col(rows, name):
 
 
 # ─── Output columns ───────────────────────────────────────────────────────────
-#   One column per (kernel, variant) combination we benchmark.
+# (csv_column_name, bench_key, peak_category)
+# peak_category is "fp8" or "fp16" — used for MFU% display.
 OUTPUT_COLS = [
-    # (csv_column_name,          bench_fn_key)
-    ("gflops_fp8_block_scaled",    "fp8"),
-    ("gflops_bf16_dense_gemm",     "dense_gemm"),
-    ("gflops_bf16_pipeline_1cta",  "pipeline_1cta"),
-    ("gflops_bf16_pipeline_2cta",  "pipeline_2cta"),
-    ("gflops_bf16_ptr_array",      "ptr_array"),
-    ("gflops_bf16_2sm",            "2sm"),
+    ("gflops_fp8_block_scaled",      "fp8_e4m3",           "fp8"),
+    ("gflops_fp8e5m2_block_scaled",  "fp8_e5m2",           "fp8"),
+    ("gflops_bf16_dense_gemm",       "dense_gemm_bf16",    "fp16"),
+    ("gflops_fp16_dense_gemm",       "dense_gemm_fp16",    "fp16"),
+    ("gflops_bf16_pipeline_1cta",    "pipeline_1cta_bf16", "fp16"),
+    ("gflops_fp16_pipeline_1cta",    "pipeline_1cta_fp16", "fp16"),
+    ("gflops_bf16_pipeline_2cta",    "pipeline_2cta_bf16", "fp16"),
+    ("gflops_fp16_pipeline_2cta",    "pipeline_2cta_fp16", "fp16"),
+    ("gflops_bf16_ptr_array",        "ptr_array_bf16",     "fp16"),
+    ("gflops_fp16_ptr_array",        "ptr_array_fp16",     "fp16"),
+    ("gflops_bf16_2sm",              "2sm_bf16",           "fp16"),
+    ("gflops_fp16_2sm",              "2sm_fp16",           "fp16"),
 ]
+
+# Logical group names for --kernel shorthand
+_KERNEL_GROUPS = {
+    "fp8":         {"fp8_e4m3", "fp8_e5m2"},
+    "dense_gemm":  {"dense_gemm_bf16", "dense_gemm_fp16"},
+    "pipeline_1cta":{"pipeline_1cta_bf16", "pipeline_1cta_fp16"},
+    "pipeline_2cta":{"pipeline_2cta_bf16", "pipeline_2cta_fp16"},
+    "ptr_array":   {"ptr_array_bf16", "ptr_array_fp16"},
+    "2sm":         {"2sm_bf16", "2sm_fp16"},
+}
+
+
+def _run_key(key, m_ker, N, K, l_ker, warmup, iters, skip_ref, tune, dry_run):
+    """Dispatch a bench key to the appropriate bench function."""
+    if key == "fp8_e4m3":
+        return bench_fp8(m_ker, N, K, l_ker, warmup, iters, dry_run,
+                         ab_dtype="Float8E4M3FN")
+    if key == "fp8_e5m2":
+        return bench_fp8(m_ker, N, K, l_ker, warmup, iters, dry_run,
+                         ab_dtype="Float8E5M2")
+    if key == "dense_gemm_bf16":
+        return bench_dense_gemm(m_ker, N, K, l_ker, warmup, iters,
+                                skip_ref, tune, dry_run, ab_dtype="BFloat16")
+    if key == "dense_gemm_fp16":
+        return bench_dense_gemm(m_ker, N, K, l_ker, warmup, iters,
+                                skip_ref, tune, dry_run, ab_dtype="Float16")
+    if key == "pipeline_1cta_bf16":
+        return bench_pipeline(m_ker, N, K, l_ker, use_2cta=False,
+                              warmup=warmup, iters=iters, skip_ref=skip_ref,
+                              tune=tune, dry_run=dry_run, ab_dtype="BFloat16")
+    if key == "pipeline_1cta_fp16":
+        return bench_pipeline(m_ker, N, K, l_ker, use_2cta=False,
+                              warmup=warmup, iters=iters, skip_ref=skip_ref,
+                              tune=tune, dry_run=dry_run, ab_dtype="Float16")
+    if key == "pipeline_2cta_bf16":
+        return bench_pipeline(m_ker, N, K, l_ker, use_2cta=True,
+                              warmup=warmup, iters=iters, skip_ref=skip_ref,
+                              tune=tune, dry_run=dry_run, ab_dtype="BFloat16")
+    if key == "pipeline_2cta_fp16":
+        return bench_pipeline(m_ker, N, K, l_ker, use_2cta=True,
+                              warmup=warmup, iters=iters, skip_ref=skip_ref,
+                              tune=tune, dry_run=dry_run, ab_dtype="Float16")
+    if key == "ptr_array_bf16":
+        return bench_ptr_array(m_ker, N, K, l_ker, warmup, iters,
+                               skip_ref, tune, dry_run, ab_dtype="BFloat16")
+    if key == "ptr_array_fp16":
+        return bench_ptr_array(m_ker, N, K, l_ker, warmup, iters,
+                               skip_ref, tune, dry_run, ab_dtype="Float16")
+    if key == "2sm_bf16":
+        return bench_2sm(m_ker, N, K, l_ker, warmup, iters, skip_ref, dry_run,
+                         ab_dtype="BFloat16")
+    if key == "2sm_fp16":
+        return bench_2sm(m_ker, N, K, l_ker, warmup, iters, skip_ref, dry_run,
+                         ab_dtype="Float16")
+    return None, f"unknown key: {key}"
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
+    all_groups = sorted(_KERNEL_GROUPS)
+    all_keys   = [key for _, key, _ in OUTPUT_COLS]
+
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--csv",    default=str(DEFAULT_CSV), help="CSV path")
     ap.add_argument("--warmup", type=int, default=3,  help="Warmup iterations (default 3)")
     ap.add_argument("--iters",  type=int, default=10, help="Benchmark iterations (default 10)")
     ap.add_argument("--skip_ref_check", action="store_true", default=True)
-    ap.add_argument("--tune",    dest="tune", action="store_true",  default=True,
-                    help="Sweep tile sizes and pick fastest (default: on)")
+    ap.add_argument("--tune",    dest="tune", action="store_true",  default=True)
     ap.add_argument("--no_tune", dest="tune", action="store_false",
                     help="Skip tile tuning, use default tile (128,128)")
     ap.add_argument("--dry_run", action="store_true")
     ap.add_argument("--kernel", nargs="+",
-                    choices=["fp8","dense_gemm","pipeline_1cta","pipeline_2cta",
-                             "ptr_array","2sm"],
-                    default=None, help="Run only these kernel(s)")
+                    choices=all_groups,
+                    default=None,
+                    help=("Kernel group(s) to run. Each group covers both BF16 and FP16. "
+                          f"Choices: {all_groups}"))
     args = ap.parse_args()
 
     csv_path = Path(args.csv)
@@ -416,30 +504,42 @@ def main():
         if req not in col:
             sys.exit(f"ERROR: CSV missing column '{req}'")
 
-    # Determine which kernels to run
-    wanted = set(args.kernel) if args.kernel else {k for _, k in OUTPUT_COLS}
+    # Expand group names → individual keys
+    if args.kernel:
+        wanted = set()
+        for g in args.kernel:
+            wanted |= _KERNEL_GROUPS.get(g, {g})
+    else:
+        wanted = set(all_keys)
 
-    # Ensure output columns exist
+    # Ensure output columns exist in CSV
     out_idx = {}
-    for col_name, key in OUTPUT_COLS:
+    for col_name, key, _ in OUTPUT_COLS:
         if key in wanted:
             out_idx[key] = ensure_col(rows, col_name)
 
-    # Print header
-    print(); print(c("=" * 110, BOLD))
-    print(c(f"  CuTeDSL Blackwell Benchmark  ←  experimental/blackwell"
-            f"  (tune={'ON' if args.tune else 'OFF'})", BOLD + CYAN))
-    print(c("=" * 110, BOLD))
-    hdr = f"  {'type':<12} {'M':>6} {'N':>6} {'K':>6} {'grp':>4}"
-    col_keys = [k for _, k in OUTPUT_COLS if k in wanted]
-    for k in col_keys:
-        hdr += f"  {k:>18}"
-    print(c(hdr, BOLD)); print(c("-" * 110, BOLD))
+    # Peak GFLOPS lookup per key
+    peak_map = {key: PEAK_GFLOPS[cat] for _, key, cat in OUTPUT_COLS}
 
-    def fmt(val, err):
-        if val is not None: return c(f"{val:>10.1f}", GREEN) + "        "
-        short = (err or "")[:30]
-        return c(f"{'N/A':>10}", YELLOW) + f" [{short}]"
+    # Print header
+    print(); print(c("=" * 130, BOLD))
+    print(c(f"  CuTeDSL Blackwell Benchmark  ←  experimental/blackwell"
+            f"  (tune={'ON' if args.tune else 'OFF'})"
+            f"  [B200 peaks: FP8={PEAK_GFLOPS['fp8']//1000}T  BF16/FP16={PEAK_GFLOPS['fp16']//1000}T  GFLOPS]",
+            BOLD + CYAN))
+    print(c("=" * 130, BOLD))
+    col_keys = [key for _, key, _ in OUTPUT_COLS if key in wanted]
+    hdr = f"  {'type':<12} {'M':>6} {'N':>6} {'K':>6} {'grp':>4}"
+    for k in col_keys:
+        hdr += f"  {k:>22}"
+    print(c(hdr, BOLD)); print(c("-" * 130, BOLD))
+
+    def fmt(val, err, peak):
+        if val is not None:
+            mfu = val / peak * 100
+            return c(f"{val:>10.0f}", GREEN) + f"({mfu:4.1f}%)"
+        short = (err or "")[:16]
+        return c(f"{'N/A':>10}", YELLOW) + f"({short:<16})"
 
     total = fail = 0
     for row in rows[1:]:
@@ -451,56 +551,25 @@ def main():
         except (ValueError, IndexError): continue
 
         total += 1
-        # For groupgemm: each kernel sees M_per_group and L=group
         is_group = (rtype == "groupgemm")
         m_ker = M // group if is_group else M
         l_ker = group      if is_group else 1
-        m_total = M  # for GFLOPS calculation: always use total M
 
         results = {}
+        for key in col_keys:
+            results[key] = _run_key(key, m_ker, N, K, l_ker,
+                                    args.warmup, args.iters,
+                                    args.skip_ref_check, args.tune, args.dry_run)
 
-        if "fp8" in wanted:
-            results["fp8"] = bench_fp8(
-                m_ker, N, K, l_ker, args.warmup, args.iters, args.dry_run)
-
-        if "dense_gemm" in wanted:
-            results["dense_gemm"] = bench_dense_gemm(
-                m_ker, N, K, l_ker, args.warmup, args.iters,
-                args.skip_ref_check, args.tune, args.dry_run)
-
-        if "pipeline_1cta" in wanted:
-            results["pipeline_1cta"] = bench_pipeline(
-                m_ker, N, K, l_ker, use_2cta=False,
-                warmup=args.warmup, iters=args.iters,
-                skip_ref=args.skip_ref_check, tune=args.tune, dry_run=args.dry_run)
-
-        if "pipeline_2cta" in wanted:
-            results["pipeline_2cta"] = bench_pipeline(
-                m_ker, N, K, l_ker, use_2cta=True,
-                warmup=args.warmup, iters=args.iters,
-                skip_ref=args.skip_ref_check, tune=args.tune, dry_run=args.dry_run)
-
-        if "ptr_array" in wanted:
-            results["ptr_array"] = bench_ptr_array(
-                m_ker, N, K, l_ker, args.warmup, args.iters,
-                args.skip_ref_check, args.tune, args.dry_run)
-
-        if "2sm" in wanted:
-            results["2sm"] = bench_2sm(
-                m_ker, N, K, l_ker, args.warmup, args.iters,
-                args.skip_ref_check, args.dry_run)
-
-        # Print row
         line = f"  {rtype:<12} {M:>6} {N:>6} {K:>6} {group:>4}"
         all_failed = True
         for key in col_keys:
             gf, err = results.get(key, (None, "skipped"))
             if gf is not None: all_failed = False
-            line += f"  {fmt(gf, err)}"
+            line += f"  {fmt(gf, err, peak_map[key])}"
         print(line)
         if all_failed: fail += 1
 
-        # Write back (incremental)
         if not args.dry_run:
             for key, idx in out_idx.items():
                 gf, _ = results.get(key, (None, None))
@@ -508,12 +577,12 @@ def main():
                     row[idx] = f"{gf:.1f}"
             save_csv(csv_path, rows)
 
-    print(c("-" * 110, BOLD))
+    print(c("-" * 130, BOLD))
     status = c("ALL OK", GREEN) if fail == 0 else c(f"{fail}/{total} rows all-failed", RED)
     print(f"  {total} shapes  {status}")
     if not args.dry_run:
         print(f"  Results written to: {csv_path}")
-    print(c("=" * 110, BOLD)); print()
+    print(c("=" * 130, BOLD)); print()
     sys.exit(1 if fail == total and total > 0 else 0)
 
 
