@@ -78,12 +78,11 @@ def _parse_fp8_us(stdout):
     return float(m.group(1)) if m else None
 
 # ─── Tuning helpers ───────────────────────────────────────────────────────────
-# Valid mma_tiler_mn candidates for 1-CTA kernels.
-# BF16/FP16 MmaF16BF16Op requires M_tile ∈ {64,128} (NOT 256). 256 is only valid
-# for 2-CTA MMA instructions (SM100_MMA_2SM_SS). Using M_tile=256 with 1-CTA kernels
-# raises "expects the M-mode to be 64 or 128" or CantImplementError.
+# Valid mma_tiler_mn candidates for 1-CTA kernels (M_tile ∈ {64,128,256}, N_tile ∈ {128,256})
+# Constraint: M_tile must be ≤ M, N_tile must be ≤ N, and both must divide evenly.
 _TILE_CANDIDATES_1CTA = [
     (128, 128), (128, 256),
+    (256, 128), (256, 256),
 ]
 # 2-CTA kernel (dense_gemm_2sm): tile is fixed by mma_inst — no tiler sweep needed.
 # dense_gemm_cute_pipeline with 2-CTA: tile is (256,256) fixed.
@@ -317,11 +316,36 @@ def bench_ptr_array(m, n, k, l, warmup, iters, skip_ref, tune, dry_run):
     return to_gflops(m, n, k, l, us), None
 
 
-# dense_gemm_2sm.py is excluded: known kernel bug where the peer CTA's TMA warp
-# exhausts all mainloop pipeline stages (MAINLOOP_STAGE_DEPTH=4) when K > 256
-# (= 4 stages × 64 K-elements/stage). All benchmark shapes have K ≥ 2048.
-# Bug: peer CTA calls producer_acquire_and_get_stage() for every k-tile but
-# producer_commit() is gated on is_leader_cta, causing deadlock for K > 256.
+# ── dense_gemm_2sm.py (BF16, 2-SM cluster) ──────────────────────────────────
+
+def _2sm_args(m, n, k, l, use_2cta, warmup, iters, skip_ref):
+    args = [
+        "--mnkl", f"{m},{n},{k},{l}",
+        "--ab_dtype", "BFloat16", "--d_dtype", "BFloat16", "--acc_dtype", "Float32",
+        "--warmup_iterations", str(warmup), "--iterations", str(iters),
+    ]
+    if use_2cta: args.append("--use_2cta_instrs")
+    else:        args.append("--no_2cta_instrs")
+    if skip_ref: args.append("--skip_ref_check")
+    return args
+
+def bench_2sm(m, n, k, l, warmup, iters, skip_ref, dry_run):
+    # Prefer 2-CTA (higher throughput); fall back to 1-CTA if M not ÷256
+    use_2cta = (m % 256 == 0 and n % 256 == 0 and k % 64 == 0)
+    use_1cta = (m % 128 == 0 and n % 256 == 0 and k % 64 == 0)
+    if not use_2cta and not use_1cta:
+        return None, f"M={m} or N={n} or K={k} violates 2SM tile alignment"
+
+    chosen_2cta = use_2cta  # prefer 2-CTA
+    if dry_run:
+        return None, "DRY: " + " ".join(
+            _2sm_args(m, n, k, l, chosen_2cta, warmup, iters, skip_ref))
+
+    us, err = _subprocess_run("dense_gemm_2sm.py",
+                              _2sm_args(m, n, k, l, chosen_2cta, warmup, iters, skip_ref),
+                              _parse_us)
+    if us is None: return None, err
+    return to_gflops(m, n, k, l, us), None
 
 
 # ─── CSV I/O ──────────────────────────────────────────────────────────────────
@@ -354,7 +378,7 @@ OUTPUT_COLS = [
     ("gflops_bf16_pipeline_1cta",  "pipeline_1cta"),
     ("gflops_bf16_pipeline_2cta",  "pipeline_2cta"),
     ("gflops_bf16_ptr_array",      "ptr_array"),
-    # gflops_bf16_2sm excluded: dense_gemm_2sm.py has a kernel bug for K > 256
+    ("gflops_bf16_2sm",            "2sm"),
 ]
 
 
@@ -374,7 +398,7 @@ def main():
     ap.add_argument("--dry_run", action="store_true")
     ap.add_argument("--kernel", nargs="+",
                     choices=["fp8","dense_gemm","pipeline_1cta","pipeline_2cta",
-                             "ptr_array"],
+                             "ptr_array","2sm"],
                     default=None, help="Run only these kernel(s)")
     args = ap.parse_args()
 
@@ -460,6 +484,11 @@ def main():
             results["ptr_array"] = bench_ptr_array(
                 m_ker, N, K, l_ker, args.warmup, args.iters,
                 args.skip_ref_check, args.tune, args.dry_run)
+
+        if "2sm" in wanted:
+            results["2sm"] = bench_2sm(
+                m_ker, N, K, l_ker, args.warmup, args.iters,
+                args.skip_ref_check, args.dry_run)
 
         # Print row
         line = f"  {rtype:<12} {M:>6} {N:>6} {K:>6} {group:>4}"
